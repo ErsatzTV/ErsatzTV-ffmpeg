@@ -47,6 +47,7 @@ RUN apt-get -yqq update && \
     libxext-dev \
     libgcc-9-dev \
     libgomp1 \
+    libmfx-dev \
     libpciaccess-dev \
     libssl-dev \
     libtool \
@@ -426,6 +427,7 @@ RUN cd /tmp/ffmpeg && \
     --enable-libfdk_aac \
     --enable-libfreetype \
     --enable-libkvazaar \
+    --enable-libmfx \
     --enable-libmp3lame \
     --enable-libopencore-amrnb \
     --enable-libopencore-amrwb \
