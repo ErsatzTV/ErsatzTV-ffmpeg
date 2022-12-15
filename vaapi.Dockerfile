@@ -504,6 +504,13 @@ RUN apt-get -yqq update && DEBIAN_FRONTEND="noninteractive" apt-get install --no
     mesa-va-drivers \
     vainfo \
     && mkdir /tmp/intel && cd /tmp/intel \
+    && git clone --depth 1 --branch master https://github.com/intel/libva \
+    && cd libva \
+    && ./autogen.sh \
+    && ./configure \
+    && make \
+    && make install \
+    && cd /tmp/intel \
     && wget -O - https://github.com/intel/gmmlib/archive/refs/tags/intel-gmmlib-22.3.2.tar.gz | tar zxf - \
     && mv gmmlib-intel-gmmlib-22.3.2 gmmlib \
     && cd gmmlib \
