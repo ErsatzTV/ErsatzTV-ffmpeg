@@ -57,7 +57,7 @@ jobs:
         with:
           builder: ${{ steps.docker-buildx.outputs.name }}
           context: .
-          file: ./docker/${{ matrix.path }}Dockerfile
+          file: ./${{ matrix.path }}Dockerfile
           push: true
           tags: |
             jasongdove/ersatztv-ffmpeg:5.1.2${{ matrix.suffix }}
@@ -68,7 +68,7 @@ jobs:
         with:
           builder: ${{ steps.docker-buildx.outputs.name }}
           context: .
-          file: ./docker/${{ matrix.path }}Dockerfile
+          file: ./${{ matrix.path }}Dockerfile
           push: true
           platforms: 'linux/arm64'
           tags: |
@@ -80,7 +80,7 @@ jobs:
         with:
           builder: ${{ steps.docker-buildx.outputs.name }}
           context: .
-          file: ./docker/${{ matrix.path }}Dockerfile
+          file: ./${{ matrix.path }}Dockerfile
           push: true
           platforms: 'linux/arm/v7'
           tags: |
