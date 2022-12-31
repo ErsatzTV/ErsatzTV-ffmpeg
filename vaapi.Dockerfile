@@ -504,6 +504,7 @@ RUN apt-get -yqq update && DEBIAN_FRONTEND="noninteractive" apt-get install --no
     cmake \
     wget \
     mesa-va-drivers \
+    i965-va-driver \
     && mkdir /tmp/intel && cd /tmp/intel \
     && git clone --depth 1 --branch master https://github.com/intel/libva \
     && cd libva \
