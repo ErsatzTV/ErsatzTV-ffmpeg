@@ -504,10 +504,16 @@ RUN apt-get -yqq update && DEBIAN_FRONTEND="noninteractive" apt-get install --no
     cmake \
     wget \
     mesa-va-drivers \
-    vainfo \
     && mkdir /tmp/intel && cd /tmp/intel \
     && git clone --depth 1 --branch master https://github.com/intel/libva \
     && cd libva \
+    && ./autogen.sh \
+    && ./configure \
+    && make \
+    && make install \
+    && cd /tmp/intel \
+    && git clone --depth 1 --branch master https://github.com/intel/libva-utils \
+    && cd libva-utils \
     && ./autogen.sh \
     && ./configure \
     && make \
