@@ -510,6 +510,8 @@ RUN ldconfig && \
 FROM mcr.microsoft.com/dotnet/aspnet:7.0-jammy-amd64 AS dotnet-runtime
 FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04 as runtime-base
 
+ENV NVIDIA_DRIVER_CAPABILITIES all
+
 RUN apt-get -yqq update && \
     apt-get install -yq --no-install-recommends ca-certificates expat libgomp1 libxcb-shape0 libv4l-0 && \
     apt-get autoremove -y && \
