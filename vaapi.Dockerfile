@@ -19,6 +19,7 @@ ENV AOM=v1.0.0 \
     LIBASS=0.14.0 \
     LIBDRM=2.4.100 \
     LIBSRT=1.4.1 \
+    LIBVA=$LIBVA \
     LIBVDPAU=1.2 \
     LIBVIDSTAB=1.1.0 \
     LIBWEBP=1.0.2 \
@@ -480,10 +481,10 @@ RUN ldconfig && \
 FROM mcr.microsoft.com/dotnet/aspnet:7.0-jammy-amd64 AS dotnet-runtime
 FROM ghcr.io/linuxserver/baseimage-ubuntu:jammy as runtime-base
 
-ARG GMMLIB \
-    LIBVA \
-    LIBVA_UTILS \
-    MEDIA_DRIVER
+ARG GMMLIB=22.3.3 \
+    LIBVA=2.17.0 \
+    LIBVA_UTILS=2.17.1 \
+    MEDIA_DRIVER=23.1.0
 
 ENV MAKEFLAGS="-j4"
 
