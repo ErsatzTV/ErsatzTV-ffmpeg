@@ -3,6 +3,11 @@ FROM ghcr.io/linuxserver/baseimage-ubuntu:jammy as devel-base
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4"
 
+ARG GMMLIB=22.3.3 \
+    LIBVA=2.17.0 \
+    LIBVA_UTILS=2.17.1 \
+    MEDIA_DRIVER=23.1.0
+
 ENV AOM=v1.0.0 \
     FDKAAC=2.0.1 \
     FFMPEG_HARD=5.1.2 \
@@ -14,7 +19,6 @@ ENV AOM=v1.0.0 \
     LIBASS=0.14.0 \
     LIBDRM=2.4.100 \
     LIBSRT=1.4.1 \
-    LIBVA=master \
     LIBVDPAU=1.2 \
     LIBVIDSTAB=1.1.0 \
     LIBWEBP=1.0.2 \
@@ -476,6 +480,11 @@ RUN ldconfig && \
 FROM mcr.microsoft.com/dotnet/aspnet:7.0-jammy-amd64 AS dotnet-runtime
 FROM ghcr.io/linuxserver/baseimage-ubuntu:jammy as runtime-base
 
+ARG GMMLIB \
+    LIBVA \
+    LIBVA_UTILS \
+    MEDIA_DRIVER
+
 ENV MAKEFLAGS="-j4"
 
 RUN apt-get -yqq update && \
@@ -506,29 +515,29 @@ RUN apt-get -yqq update && DEBIAN_FRONTEND="noninteractive" apt-get install --no
     mesa-va-drivers \
     i965-va-driver \
     && mkdir /tmp/intel && cd /tmp/intel \
-    && git clone --depth 1 --branch master https://github.com/intel/libva \
+    && git clone --depth 1 --branch "${LIBVA}" https://github.com/intel/libva \
     && cd libva \
     && ./autogen.sh \
     && ./configure \
     && make \
     && make install \
     && cd /tmp/intel \
-    && git clone --depth 1 --branch master https://github.com/intel/libva-utils \
+    && git clone --depth 1 --branch "${LIBVA_UTILS}" https://github.com/intel/libva-utils \
     && cd libva-utils \
     && ./autogen.sh \
     && ./configure \
     && make \
     && make install \
     && cd /tmp/intel \
-    && wget -O - https://github.com/intel/gmmlib/archive/refs/tags/intel-gmmlib-22.3.2.tar.gz | tar zxf - \
-    && mv gmmlib-intel-gmmlib-22.3.2 gmmlib \
+    && wget -O - "https://github.com/intel/gmmlib/archive/refs/tags/intel-gmmlib-${GMMLIB}.tar.gz" | tar zxf - \
+    && mv "gmmlib-intel-gmmlib-${GMMLIB}" gmmlib \
     && cd gmmlib \
     && mkdir build && cd build \
     && cmake .. \
     && make \
     && make install \
     && cd /tmp/intel \
-    && git clone --depth 1 --branch master https://github.com/intel/media-driver \
+    && git clone --depth 1 --branch "intel-media-${MEDIA_DRIVER}" https://github.com/intel/media-driver \
     && mkdir build_media && cd build_media \
     && cmake ../media-driver \
     && make \
