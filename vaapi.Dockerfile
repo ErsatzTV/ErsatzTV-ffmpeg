@@ -409,17 +409,14 @@ RUN cd /tmp/xvid/build/generic && \
     make install
 
 # ffmpeg
-RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
-    FFMPEG=${FFMPEG_HARD}; \
-    else \
-    FFMPEG=${FFMPEG_VERSION}; \
-    fi && \
-    mkdir -p /tmp/ffmpeg && \
-    echo "https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2" && \
-    curl -Lf \
-    https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2 | \
-    tar -jx --strip-components=1 -C /tmp/ffmpeg
-RUN cd /tmp/ffmpeg && \
+RUN cd /tmp && \
+    git clone https://github.com/intel/cartwheel-ffmpeg --recursive && \
+    cd cartwheel-ffmpeg && \
+    git submodule update --init --recursive && \
+    cd ffmpeg && \
+    git config user.name "ersatztv" && git config user.email "ersatztv@ersatztv.org" && \
+    git am ../patches/*.patch
+RUN cd /tmp/cartwheel-ffmpeg/ffmpeg && \
     ./configure \
     --disable-debug \
     --disable-doc \
@@ -466,12 +463,12 @@ RUN ldconfig && \
     /buildout/usr/local/bin \
     /buildout/usr/lib && \
     cp \
-    /tmp/ffmpeg/ffmpeg \
+    /tmp/cartwheel-ffmpeg/ffmpeg/ffmpeg \
     /buildout/usr/local/bin && \
     cp \
-    /tmp/ffmpeg/ffprobe \
+    /tmp/cartwheel-ffmpeg/ffmpeg/ffprobe \
     /buildout/usr/local/bin && \
-    ldd /tmp/ffmpeg/ffmpeg \
+    ldd /tmp/cartwheel-ffmpeg/ffmpeg/ffmpeg \
     | awk '/local/ {print $3}' \
     | xargs -i cp -L {} /buildout/usr/lib/ && \
     cp -a \
