@@ -111,7 +111,7 @@ RUN cd /tmp/fdk-aac && \
 RUN mkdir -p /tmp/ffnvcodec && \
     git clone \
     --branch n${NVCODEC} \
-    --depth 1 https://git.videolan.org/git/ffmpeg/nv-codec-headers.git \
+    --depth 1 https://github.com/FFmpeg/nv-codec-headers \
     /tmp/ffnvcodec
 RUN cd /tmp/ffnvcodec && \
     make install
