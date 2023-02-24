@@ -3,11 +3,7 @@ FROM ghcr.io/linuxserver/baseimage-ubuntu:jammy as devel-base
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4"
 
-ARG GMMLIB=22.3.3 \
-    LIBVA=2.17.0 \
-    LIBVA_UTILS=2.17.1 \
-    MEDIA_DRIVER=23.1.0
-
+ARG LIBVA=2.17.0
 ENV AOM=v1.0.0 \
     FDKAAC=2.0.1 \
     FFMPEG_HARD=5.1.2 \
@@ -33,7 +29,24 @@ ENV AOM=v1.0.0 \
     X265=3.4 \
     XVID=1.3.7 
 
-RUN apt-get -yqq update && \ 
+RUN apt-get -yqq update && \
+    apt-get install -y gpg-agent wget && \
+    wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | \
+      gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
+    echo 'deb [arch=amd64,i386 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu jammy arc' | \
+      tee  /etc/apt/sources.list.d/intel.gpu.jammy.list && \
+    apt-get -yqq update && \
+    apt-get install -yq \
+    libmfx-dev \
+    libegl1-mesa-dev \
+    libgl1-mesa-dev \
+    libgles2-mesa-dev \
+    libigc-dev \
+    intel-igc-cm \
+    libigdfcl-dev \
+    libigfxcmrt-dev \
+    level-zero-dev \
+    libvpl-dev && \
     apt-get -yq --no-install-recommends install -y \
     autoconf \
     automake \
@@ -52,7 +65,6 @@ RUN apt-get -yqq update && \
     libxext-dev \
     libgcc-9-dev \
     libgomp1 \
-    libmfx-dev \
     libpciaccess-dev \
     libssl-dev \
     libtool \
@@ -377,9 +389,7 @@ RUN cd /tmp/vpx && \
 
 # x264
 RUN mkdir -p /tmp/x264 && \
-    curl -Lf \
-    https://code.videolan.org/videolan/x264/-/archive/master/x264-stable.tar.bz2 | \
-    tar -jx --strip-components=1 -C /tmp/x264
+    git clone --branch stable --depth 1 https://github.com/mirror/x264 /tmp/x264
 RUN cd /tmp/x264 && \
     ./configure \
     --disable-cli \
@@ -429,7 +439,7 @@ RUN cd /tmp/cartwheel-ffmpeg/ffmpeg && \
     --enable-libfdk_aac \
     --enable-libfreetype \
     --enable-libkvazaar \
-    --enable-libmfx \
+    --enable-libvpl \
     --enable-libmp3lame \
     --enable-libopencore-amrnb \
     --enable-libopencore-amrwb \
@@ -478,73 +488,40 @@ RUN ldconfig && \
 FROM mcr.microsoft.com/dotnet/aspnet:7.0-jammy-amd64 AS dotnet-runtime
 FROM ghcr.io/linuxserver/baseimage-ubuntu:jammy as runtime-base
 
-ARG GMMLIB=22.3.3 \
-    LIBVA=2.17.0 \
-    LIBVA_UTILS=2.17.1 \
-    MEDIA_DRIVER=23.1.0
-
-ENV MAKEFLAGS="-j4"
+ENV MAKEFLAGS="-j4" \
+    LIBVA_DRIVERS_PATH="/usr/lib/x86_64-linux-gnu/dri" \
+    LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu" \
+    LIBVA_MESSAGING_LEVEL=0
 
 RUN apt-get -yqq update && \
-    DEBIAN_FRONTEND="noninteractive" apt-get install -yq --no-install-recommends ca-certificates expat libgomp1 libxcb-shape0 libv4l-0 \
+    apt-get install -yq --no-install-recommends ca-certificates expat libgomp1 libxcb-shape0 libv4l-0 \
     && apt autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=devel-base /buildout/ /
 COPY --from=dotnet-runtime /usr/share/dotnet /usr/share/dotnet
 
-RUN apt-get -yqq update && DEBIAN_FRONTEND="noninteractive" apt-get install --no-install-recommends -y \
-    libicu-dev \
+RUN apt-get -yqq update && \
+    DEBIAN_FRONTEND="noninteractive" apt-get install -y gpg-agent wget && \
+    wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | \
+      gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
+    echo 'deb [arch=amd64,i386 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu jammy arc' | \
+      tee  /etc/apt/sources.list.d/intel.gpu.jammy.list && \
+    apt-get -yqq update && \
+    DEBIAN_FRONTEND="noninteractive" apt-get install -yq \
     tzdata \
     fontconfig \
     fonts-dejavu \
     libgdiplus \
-    autoconf \
-    automake \
-    libtool \
-    libdrm-dev \
-    libmfx-dev \
-    ocl-icd-opencl-dev \
-    git \
-    pkg-config \
-    build-essential \
-    cmake \
-    wget \
-    mesa-va-drivers \
-    i965-va-driver-shaders \
-    && mkdir /tmp/intel && cd /tmp/intel \
-    && git clone --depth 1 --branch "${LIBVA}" https://github.com/intel/libva \
-    && cd libva \
-    && ./autogen.sh \
-    && ./configure \
-    && make \
-    && make install \
-    && cd /tmp/intel \
-    && git clone --depth 1 --branch "${LIBVA_UTILS}" https://github.com/intel/libva-utils \
-    && cd libva-utils \
-    && ./autogen.sh \
-    && ./configure \
-    && make \
-    && make install \
-    && cd /tmp/intel \
-    && wget -O - "https://github.com/intel/gmmlib/archive/refs/tags/intel-gmmlib-${GMMLIB}.tar.gz" | tar zxf - \
-    && mv "gmmlib-intel-gmmlib-${GMMLIB}" gmmlib \
-    && cd gmmlib \
-    && mkdir build && cd build \
-    && cmake .. \
-    && make \
-    && make install \
-    && cd /tmp/intel \
-    && git clone --depth 1 --branch "intel-media-${MEDIA_DRIVER}" https://github.com/intel/media-driver \
-    && mkdir build_media && cd build_media \
-    && cmake ../media-driver \
-    && make \
-    && make install \
-    && apt-get purge -y autoconf automake libtool git build-essential cmake wget \
+    vainfo \
+    intel-opencl-icd intel-level-zero-gpu level-zero \
+    intel-media-va-driver-non-free libmfx1 libmfxgen1 libvpl2 \
+    libegl-mesa0 libegl1-mesa libegl1-mesa-dev libgbm1 libgl1-mesa-dev libgl1-mesa-dri \
+    libglapi-mesa libgles2-mesa-dev libglx-mesa0 libigdgmm12 libxatracker2 mesa-va-drivers \
+    mesa-vdpau-drivers mesa-vulkan-drivers va-driver-all \
     && apt autoremove -y \
     && rm -rf /tmp/intel \
-    && rm -rf /var/lib/apt/lists/* \
-    && mv /usr/lib/x86_64-linux-gnu/dri/* /usr/local/lib/dri/
+    && rm -rf /var/lib/apt/lists/*
 
 CMD         ["--help"]
 ENTRYPOINT  ["ffmpeg"]
