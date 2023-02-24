@@ -394,9 +394,7 @@ RUN cd /tmp/vpx && \
 
 # x264
 RUN mkdir -p /tmp/x264 && \
-    curl -Lf \
-    https://code.videolan.org/videolan/x264/-/archive/master/x264-stable.tar.bz2 | \
-    tar -jx --strip-components=1 -C /tmp/x264
+    git clone --branch stable --depth 1 https://github.com/mirror/x264 /tmp/x264
 RUN cd /tmp/x264 && \
     ./configure \
     --disable-cli \
