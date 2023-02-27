@@ -519,6 +519,7 @@ RUN apt-get -yqq update && \
     libegl-mesa0 libegl1-mesa libegl1-mesa-dev libgbm1 libgl1-mesa-dev libgl1-mesa-dri \
     libglapi-mesa libgles2-mesa-dev libglx-mesa0 libigdgmm12 libxatracker2 mesa-va-drivers \
     mesa-vdpau-drivers mesa-vulkan-drivers va-driver-all \
+    i965-va-driver-shaders \
     && apt autoremove -y \
     && rm -rf /tmp/intel \
     && rm -rf /var/lib/apt/lists/*
