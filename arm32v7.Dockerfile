@@ -5,13 +5,14 @@ ENV MAKEFLAGS="-j4"
 
 ENV AOM=v1.0.0 \
     FDKAAC=2.0.1 \
-    FFMPEG_HARD=5.1.2 \
+    FFMPEG_HARD=6.0 \
     FONTCONFIG=2.13.92 \
     FREETYPE=2.10.4 \
     FRIBIDI=1.0.8 \
     KVAZAAR=2.0.0 \
     LAME=3.100 \
     LIBASS=0.14.0 \
+    LIBDAV1D=1.1.0 \
     LIBSRT=1.4.1 \
     LIBVIDSTAB=1.1.0 \
     LIBWEBP=1.0.2 \
@@ -52,16 +53,21 @@ RUN apt-get -yqq update && \
     libxml2-dev \
     make \
     nasm \
+    ninja-build \
     patch \
     perl \
     pkg-config \
-    python2 \
+    python3 \
+    python3-pip\
+    python3-setuptools \
+    python3-wheel \
     x11proto-xext-dev \
     xserver-xorg-dev \
     yasm \
     zlib1g-dev && \
     apt-get autoremove -y && \
-    apt-get clean -y
+    apt-get clean -y && \
+    pip3 install meson
 
 # aom
 RUN mkdir -p /tmp/aom && \
@@ -81,6 +87,17 @@ RUN cd /tmp/aom && \
     -DBUILD_STATIC_LIBS=0 .. && \
     make && \
     make install
+
+# dav1d
+RUN mkdir -p /tmp/dav1d && \
+    git clone \
+    --branch ${LIBDAV1D} \
+    --depth 1 https://github.com/videolan/dav1d.git \
+    /tmp/dav1d
+RUN mkdir /tmp/dav1d/build && cd /tmp/dav1d/build && \
+    meson setup -Denable_tools=false -Denable_tests=false --libdir /usr/local/lib .. && \
+    ninja && \
+    ninja install
 
 # fdk-aac
 RUN mkdir -p /tmp/fdk-aac && \
@@ -382,6 +399,7 @@ RUN cd /tmp/ffmpeg && \
     --enable-fontconfig \
     --enable-gpl \
     --enable-libaom \
+    --enable-libdav1d \
     --enable-libass \
     --enable-libfdk_aac \
     --enable-libfreetype \
