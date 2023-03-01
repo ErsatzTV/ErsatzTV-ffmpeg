@@ -60,7 +60,7 @@ jobs:
           file: ./${{ matrix.path }}Dockerfile
           push: true
           tags: |
-            jasongdove/ersatztv-ffmpeg:5.1.2${{ matrix.suffix }}
+            jasongdove/ersatztv-ffmpeg:6.0${{ matrix.suffix }}
         if: ${{ matrix.name != 'arm64' && matrix.name != 'arm32v7' }}
 
       - name: Build and push
@@ -72,7 +72,7 @@ jobs:
           push: true
           platforms: 'linux/arm64'
           tags: |
-            jasongdove/ersatztv-ffmpeg:5.1.2${{ matrix.suffix }}
+            jasongdove/ersatztv-ffmpeg:6.0${{ matrix.suffix }}
         if: ${{ matrix.name == 'arm64' }}
 
       - name: Build and push
@@ -84,5 +84,5 @@ jobs:
           push: true
           platforms: 'linux/arm/v7'
           tags: |
-            jasongdove/ersatztv-ffmpeg:5.1.2${{ matrix.suffix }}
+            jasongdove/ersatztv-ffmpeg:6.0${{ matrix.suffix }}
         if: ${{ matrix.name == 'arm32v7' }}
