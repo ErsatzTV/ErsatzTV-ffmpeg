@@ -6,13 +6,14 @@ ENV MAKEFLAGS="-j4"
 ARG LIBVA=2.17.0
 ENV AOM=v1.0.0 \
     FDKAAC=2.0.1 \
-    FFMPEG_HARD=5.1.2 \
+    FFMPEG_HARD=6.0 \
     FONTCONFIG=2.13.92 \
     FREETYPE=2.10.4 \
     FRIBIDI=1.0.8 \
     KVAZAAR=2.0.0 \
     LAME=3.100 \
     LIBASS=0.14.0 \
+    LIBDAV1D=1.1.0 \
     LIBDRM=2.4.100 \
     LIBSRT=1.4.1 \
     LIBVA=$LIBVA \
@@ -108,6 +109,17 @@ RUN cd /tmp/aom && \
     -DBUILD_STATIC_LIBS=0 .. && \
     make && \
     make install
+
+# dav1d
+RUN mkdir -p /tmp/dav1d && \
+    git clone \
+    --branch ${LIBDAV1D} \
+    --depth 1 https://github.com/videolan/dav1d.git \
+    /tmp/dav1d
+RUN mkdir /tmp/dav1d/build && cd /tmp/dav1d/build && \
+    meson setup -Denable_tools=false -Denable_tests=false --libdir /usr/local/lib .. && \
+    ninja && \
+    ninja install
 
 # fdk-aac
 RUN mkdir -p /tmp/fdk-aac && \
@@ -419,14 +431,17 @@ RUN cd /tmp/xvid/build/generic && \
     make install
 
 # ffmpeg
-RUN cd /tmp && \
-    git clone https://github.com/intel/cartwheel-ffmpeg --recursive && \
-    cd cartwheel-ffmpeg && \
-    git submodule update --init --recursive && \
-    cd ffmpeg && \
-    git config user.name "ersatztv" && git config user.email "ersatztv@ersatztv.org" && \
-    git am ../patches/*.patch
-RUN cd /tmp/cartwheel-ffmpeg/ffmpeg && \
+RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
+    FFMPEG=${FFMPEG_HARD}; \
+    else \
+    FFMPEG=${FFMPEG_VERSION}; \
+    fi && \
+    mkdir -p /tmp/ffmpeg && \
+    echo "https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2" && \
+    curl -Lf \
+    https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2 | \
+    tar -jx --strip-components=1 -C /tmp/ffmpeg
+RUN cd /tmp/ffmpeg && \
     ./configure \
     --disable-debug \
     --disable-doc \
@@ -435,6 +450,7 @@ RUN cd /tmp/cartwheel-ffmpeg/ffmpeg && \
     --enable-fontconfig \
     --enable-gpl \
     --enable-libaom \
+    --enable-libdav1d \
     --enable-libass \
     --enable-libfdk_aac \
     --enable-libfreetype \
@@ -473,12 +489,12 @@ RUN ldconfig && \
     /buildout/usr/local/bin \
     /buildout/usr/lib && \
     cp \
-    /tmp/cartwheel-ffmpeg/ffmpeg/ffmpeg \
+    /tmp/ffmpeg/ffmpeg \
     /buildout/usr/local/bin && \
     cp \
-    /tmp/cartwheel-ffmpeg/ffmpeg/ffprobe \
+    /tmp/ffmpeg/ffprobe \
     /buildout/usr/local/bin && \
-    ldd /tmp/cartwheel-ffmpeg/ffmpeg/ffmpeg \
+    ldd /tmp/ffmpeg/ffmpeg \
     | awk '/local/ {print $3}' \
     | xargs -i cp -L {} /buildout/usr/lib/ && \
     cp -a \
@@ -491,7 +507,8 @@ FROM ghcr.io/linuxserver/baseimage-ubuntu:jammy as runtime-base
 ENV MAKEFLAGS="-j4" \
     LIBVA_DRIVERS_PATH="/usr/lib/x86_64-linux-gnu/dri" \
     LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu" \
-    LIBVA_MESSAGING_LEVEL=0
+    LIBVA_MESSAGING_LEVEL=0 \
+    LIBVA_DISPLAY=drm
 
 RUN apt-get -yqq update && \
     apt-get install -yq --no-install-recommends ca-certificates expat libgomp1 libxcb-shape0 libv4l-0 \
