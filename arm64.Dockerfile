@@ -3,26 +3,26 @@ FROM ghcr.io/linuxserver/baseimage-ubuntu:arm64v8-jammy as devel-base
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4"
 
-ENV AOM=v1.0.0 \
-    FDKAAC=2.0.1 \
+ENV AOM=v3.6.1 \
+    FDKAAC=2.0.2 \
     FFMPEG_HARD=6.0 \
-    FONTCONFIG=2.13.92 \
-    FREETYPE=2.10.4 \
-    FRIBIDI=1.0.8 \
-    KVAZAAR=2.0.0 \
+    FONTCONFIG=2.14.2 \
+    FREETYPE=2.12.1 \
+    FRIBIDI=1.0.13 \
+    KVAZAAR=2.2.0 \
     LAME=3.100 \
-    LIBASS=0.14.0 \
-    LIBDAV1D=1.1.0 \
-    LIBSRT=1.4.1 \
-    LIBVIDSTAB=1.1.0 \
-    LIBWEBP=1.0.2 \
-    OGG=1.3.4 \
-    OPENCOREAMR=0.1.5 \
-    OPENJPEG=2.3.1 \
-    OPUS=1.3 \
+    LIBASS=0.17.1 \
+    LIBDAV1D=1.2.1 \
+    LIBSRT=1.5.1 \
+    LIBVIDSTAB=1.1.1 \
+    LIBWEBP=1.3.0 \
+    OGG=1.3.5 \
+    OPENCOREAMR=0.1.6 \
+    OPENJPEG=2.5.0 \
+    OPUS=1.3.1 \
     THEORA=1.1.1 \
     VORBIS=1.3.7 \
-    VPX=1.10.0 \
+    VPX=1.13.0 \
     X265=3.3 \
     XVID=1.3.7 
 
@@ -44,6 +44,7 @@ RUN apt-get -yqq update && \
     libxext-dev \
     libgcc-9-dev \
     libgomp1 \
+    libharfbuzz-dev \
     libpciaccess-dev \
     libssl-dev \
     libtool \
@@ -438,7 +439,7 @@ FROM ghcr.io/linuxserver/baseimage-ubuntu:arm64v8-jammy as runtime-base
 ENV MAKEFLAGS="-j4"
 
 RUN apt-get -yqq update && \
-    DEBIAN_FRONTEND="noninteractive" apt-get install -yq --no-install-recommends ca-certificates expat libgomp1 libxcb-shape0 libv4l-0 \
+    DEBIAN_FRONTEND="noninteractive" apt-get install -yq --no-install-recommends ca-certificates expat libgomp1 libharfbuzz-bin libxml2 libxcb-shape0 libv4l-0 \
     && apt autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 

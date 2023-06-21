@@ -3,31 +3,31 @@ FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 as devel-base
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4"
 
-ENV AOM=v1.0.0 \
-    FDKAAC=2.0.1 \
+ENV AOM=v3.6.1 \
+    FDKAAC=2.0.2 \
     FFMPEG_HARD=6.0 \
-    FONTCONFIG=2.13.92 \
-    FREETYPE=2.10.4 \
-    FRIBIDI=1.0.8 \
-    KVAZAAR=2.0.0 \
+    FONTCONFIG=2.14.2 \
+    FREETYPE=2.12.1 \
+    FRIBIDI=1.0.13 \
+    KVAZAAR=2.2.0 \
     LAME=3.100 \
-    LIBASS=0.14.0 \
-    LIBDAV1D=1.1.0 \
+    LIBASS=0.17.0 \
+    LIBDAV1D=1.2.0 \
     LIBDRM=2.4.100 \
-    LIBSRT=1.4.1 \
-    LIBVA=2.17.0 \
-    LIBVDPAU=1.2 \
-    LIBVIDSTAB=1.1.0 \
-    LIBVMAF=master \
-    LIBWEBP=1.0.2 \
-    NVCODEC=11.1.5.2 \
-    OGG=1.3.4 \
-    OPENCOREAMR=0.1.5 \
-    OPENJPEG=2.3.1 \
-    OPUS=1.3 \
+    LIBSRT=1.5.1 \
+    LIBVA=2.18.0 \
+    LIBVDPAU=1.5 \
+    LIBVIDSTAB=1.1.1 \
+    LIBVMAF=2.3.1 \
+    LIBWEBP=1.3.0 \
+    NVCODEC=12.0.16.0 \
+    OGG=1.3.5 \
+    OPENCOREAMR=0.1.6 \
+    OPENJPEG=2.5.0 \
+    OPUS=1.3.1 \
     THEORA=1.1.1 \
     VORBIS=1.3.7 \
-    VPX=1.10.0 \
+    VPX=1.13.0 \
     X265=3.4 \
     XVID=1.3.7 
 
@@ -51,6 +51,7 @@ RUN apt-get -yqq update && \
     libxext-dev \
     libgcc-9-dev \
     libgomp1 \
+    libharfbuzz-dev \
     libpciaccess-dev \
     libssl-dev \
     libtool \
@@ -250,16 +251,12 @@ RUN cd /tmp/libva && \
 # libvdpau
 RUN mkdir -p /tmp/libvdpau && \
     git clone \
-    --branch libvdpau-${LIBVDPAU} \
+    --branch ${LIBVDPAU} \
     --depth 1 https://gitlab.freedesktop.org/vdpau/libvdpau.git \
     /tmp/libvdpau
 RUN cd /tmp/libvdpau && \
-    ./autogen.sh && \
-    ./configure \
-    --disable-static \
-    --enable-shared && \
-    make && \
-    make install
+    meson setup -Ddocumentation=false build && \
+    ninja -C build install
 
 # libwebp
 RUN mkdir -p /tmp/libwebp && \
@@ -275,10 +272,9 @@ RUN cd /tmp/libwebp && \
 
 # vmaf
 RUN mkdir -p /tmp/vmaf && \
-    git clone \
-    --branch ${LIBVMAF} \
-    https://github.com/Netflix/vmaf.git \
-    /tmp/vmaf
+    curl -Lf \
+    https://github.com/Netflix/vmaf/archive/refs/tags/v${LIBVMAF}.tar.gz | \
+    tar -zx --strip-components=1 -C /tmp/vmaf
 RUN cd /tmp/vmaf/libvmaf && \
     meson build --buildtype release && \
     ninja -vC build && \
@@ -524,7 +520,7 @@ FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04 as runtime-base
 ENV NVIDIA_DRIVER_CAPABILITIES all
 
 RUN apt-get -yqq update && \
-    apt-get install -yq --no-install-recommends ca-certificates expat libgomp1 libxcb-shape0 libv4l-0 && \
+    apt-get install -yq --no-install-recommends ca-certificates expat libgomp1 libharfbuzz-bin libxml2 libxcb-shape0 libv4l-0 && \
     apt-get autoremove -y && \
     apt-get clean -y
 
