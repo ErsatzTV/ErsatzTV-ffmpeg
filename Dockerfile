@@ -5,7 +5,7 @@ ENV MAKEFLAGS="-j4"
 
 ENV AOM=v3.6.1 \
     FDKAAC=2.0.2 \
-    FFMPEG_HARD=snapshot \
+    FFMPEG_HARD=6.1 \
     FONTCONFIG=2.14.2 \
     FREETYPE=2.12.1 \
     FRIBIDI=1.0.13 \
@@ -464,7 +464,7 @@ COPY --from=devel-base /buildout/ /
 COPY --from=dotnet-runtime /usr/share/dotnet /usr/share/dotnet
 
 RUN apt-get update && \
-    apt-get install -y libicu-dev tzdata fontconfig fonts-dejavu libgdiplus && \
+    apt-get install -y libicu-dev tzdata fontconfig fonts-noto-core fonts-noto-cjk libgdiplus && \
     rm -rf /var/lib/apt/lists/*
 
 CMD         ["--help"]
