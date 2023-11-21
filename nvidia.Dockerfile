@@ -432,6 +432,7 @@ RUN cd /tmp/xvid/build/generic && \
     make install
 
 # ffmpeg
+# TODO: this currently has a workaround for https://trac.ffmpeg.org/ticket/10668
 RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
     FFMPEG=${FFMPEG_HARD}; \
     else \
@@ -441,7 +442,10 @@ RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
     echo "https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2" && \
     curl -Lf \
     https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2 | \
-    tar -jx --strip-components=1 -C /tmp/ffmpeg
+    tar -jx --strip-components=1 -C /tmp/ffmpeg && \
+    cd /tmp/ffmpeg && \
+    curl https://raw.githubusercontent.com/FFmpeg/FFmpeg/dc7bd7c5a5ad5ea800dfb63cc5dd15670d065527/libavcodec/cuviddec.c --output libavcodec/cuviddec.c
+
 RUN cd /tmp/ffmpeg && \
     ./configure \
     --disable-debug \
