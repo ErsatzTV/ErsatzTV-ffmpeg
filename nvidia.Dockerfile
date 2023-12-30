@@ -518,7 +518,7 @@ RUN ldconfig && \
     'libnvidia-opencl.so.1' > \
     /buildout/etc/OpenCL/vendors/nvidia.icd
 
-FROM mcr.microsoft.com/dotnet/aspnet:7.0-jammy-amd64 AS dotnet-runtime
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-jammy-amd64 AS dotnet-runtime
 FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04 as runtime-base
 
 ENV NVIDIA_DRIVER_CAPABILITIES all
