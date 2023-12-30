@@ -498,7 +498,7 @@ RUN ldconfig && \
     /usr/local/lib/libdrm_* \
     /buildout/usr/lib/
 
-FROM mcr.microsoft.com/dotnet/aspnet:7.0-jammy-amd64 AS dotnet-runtime
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-jammy-amd64 AS dotnet-runtime
 FROM ghcr.io/linuxserver/baseimage-ubuntu:jammy as runtime-base
 
 ENV MAKEFLAGS="-j4" \

@@ -443,7 +443,7 @@ RUN ldconfig && \
     | awk '/local/ {print $3}' \
     | xargs -i cp -L {} /buildout/usr/lib/
 
-FROM mcr.microsoft.com/dotnet/aspnet:7.0-jammy-arm32v7 AS dotnet-runtime
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-jammy-arm32v7 AS dotnet-runtime
 FROM ghcr.io/linuxserver/baseimage-ubuntu:arm32v7-jammy-05e08486-ls73 as runtime-base
 
 ENV MAKEFLAGS="-j4"

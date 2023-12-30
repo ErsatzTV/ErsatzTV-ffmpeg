@@ -433,7 +433,7 @@ RUN ldconfig && \
     | awk '/local/ {print $3}' \
     | xargs -i cp -L {} /buildout/usr/lib/
 
-FROM mcr.microsoft.com/dotnet/aspnet:7.0-jammy-arm64v8 AS dotnet-runtime
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-jammy-arm64v8 AS dotnet-runtime
 FROM ghcr.io/linuxserver/baseimage-ubuntu:arm64v8-jammy as runtime-base
 
 ENV MAKEFLAGS="-j4"
