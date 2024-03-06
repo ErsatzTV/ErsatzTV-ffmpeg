@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 as devel-base
+FROM nvidia/cuda:11.8.0-devel-ubuntu20.04 as devel-base
 
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4"
@@ -17,10 +17,8 @@ ENV AOM=v3.6.1 \
     LIBSRT=1.5.1 \
     LIBVA=2.18.0 \
     LIBVDPAU=1.5 \
-    LIBVIDSTAB=1.1.1 \
-    LIBVMAF=2.3.1 \
     LIBWEBP=1.3.0 \
-    NVCODEC=12.1.14.0 \
+    NVCODEC=11.1.5.3 \
     OGG=1.3.5 \
     OPENCOREAMR=0.1.6 \
     OPENJPEG=2.5.0 \
@@ -64,6 +62,7 @@ RUN apt-get -yqq update && \
     ninja-build \
     nvidia-cuda-toolkit \
     ocl-icd-opencl-dev \
+    patch \
     perl \
     pkg-config \
     python3 \
@@ -270,16 +269,6 @@ RUN cd /tmp/libwebp && \
     make && \
     make install
 
-# vmaf
-RUN mkdir -p /tmp/vmaf && \
-    curl -Lf \
-    https://github.com/Netflix/vmaf/archive/refs/tags/v${LIBVMAF}.tar.gz | \
-    tar -zx --strip-components=1 -C /tmp/vmaf
-RUN cd /tmp/vmaf/libvmaf && \
-    meson build --buildtype release && \
-    ninja -vC build && \
-    ninja -vC build install
-
 # ogg
 RUN mkdir -p /tmp/ogg && \
     curl -Lf \
@@ -353,17 +342,6 @@ RUN cd /tmp/theora && \
     ./configure \
     --disable-static \
     --enable-shared && \
-    make && \
-    make install
-
-# vid.stab
-RUN mkdir -p /tmp/vid.stab && \
-    curl -Lf \
-    https://github.com/georgmartius/vid.stab/archive/v${LIBVIDSTAB}.tar.gz | \
-    tar -zx --strip-components=1 -C /tmp/vid.stab
-RUN cd /tmp/vid.stab && \
-    cmake \
-    -DBUILD_STATIC_LIBS=0 . && \
     make && \
     make install
 
@@ -448,6 +426,7 @@ RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
 
 RUN cd /tmp/ffmpeg && \
     ./configure \
+    --ld=clang++ \
     --disable-debug \
     --disable-doc \
     --disable-ffplay \
@@ -472,8 +451,6 @@ RUN cd /tmp/ffmpeg && \
     --enable-libsrt \
     --enable-libtheora \
     --enable-libv4l2 \
-    --enable-libvidstab \
-    --enable-libvmaf \
     --enable-libvorbis \
     --enable-libvpx \
     --enable-libwebp \
@@ -518,18 +495,24 @@ RUN ldconfig && \
     'libnvidia-opencl.so.1' > \
     /buildout/etc/OpenCL/vendors/nvidia.icd
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0-jammy-amd64 AS dotnet-runtime
-FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04 as runtime-base
+FROM nvidia/cuda:11.8.0-runtime-ubuntu20.04 as runtime-base
 
 ENV NVIDIA_DRIVER_CAPABILITIES all
 
 RUN apt-get -yqq update && \
-    apt-get install -yq --no-install-recommends ca-certificates expat libgomp1 libharfbuzz-bin libxml2 libxcb-shape0 libv4l-0 && \
+    apt-get install -yq --no-install-recommends ca-certificates expat libgomp1 libharfbuzz-bin libxml2 libxcb-shape0 libv4l-0 wget && \
+    apt-get autoremove -y && \
+    apt-get clean -y
+
+RUN wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
+    dpkg -i packages-microsoft-prod.deb && \
+    rm packages-microsoft-prod.deb && \
+    apt-get -yqq update && \
+    apt-get install -yq aspnetcore-runtime-8.0 && \
     apt-get autoremove -y && \
     apt-get clean -y
 
 COPY --from=devel-base /buildout/ /
-COPY --from=dotnet-runtime /usr/share/dotnet /usr/share/dotnet
 
 RUN apt-get update && \
     apt-get install -y libicu-dev tzdata fontconfig fonts-noto-core fonts-noto-cjk libgdiplus && \
