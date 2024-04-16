@@ -5,7 +5,7 @@ ENV MAKEFLAGS="-j4"
 
 ENV AOM=v3.6.1 \
     FDKAAC=2.0.2 \
-    FFMPEG_HARD=6.1 \
+    FFMPEG_HARD=7.0 \
     FONTCONFIG=2.14.2 \
     FREETYPE=2.12.1 \
     FRIBIDI=1.0.13 \
@@ -501,14 +501,6 @@ ENV NVIDIA_DRIVER_CAPABILITIES all
 
 RUN apt-get -yqq update && \
     apt-get install -yq --no-install-recommends ca-certificates expat libgomp1 libharfbuzz-bin libxml2 libxcb-shape0 libv4l-0 wget && \
-    apt-get autoremove -y && \
-    apt-get clean -y
-
-RUN wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
-    dpkg -i packages-microsoft-prod.deb && \
-    rm packages-microsoft-prod.deb && \
-    apt-get -yqq update && \
-    apt-get install -yq aspnetcore-runtime-8.0 && \
     apt-get autoremove -y && \
     apt-get clean -y
 
