@@ -5,7 +5,7 @@ ENV MAKEFLAGS="-j4"
 
 ENV AOM=v3.6.1 \
     FDKAAC=2.0.2 \
-    FFMPEG_HARD=6.1 \
+    FFMPEG_HARD=7.0 \
     FONTCONFIG=2.14.2 \
     FREETYPE=2.12.1 \
     FRIBIDI=1.0.13 \
