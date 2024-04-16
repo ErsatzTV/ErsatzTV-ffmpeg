@@ -498,7 +498,6 @@ RUN ldconfig && \
     /usr/local/lib/libdrm_* \
     /buildout/usr/lib/
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0-jammy-amd64 AS dotnet-runtime
 FROM ghcr.io/linuxserver/baseimage-ubuntu:jammy as runtime-base
 
 ENV MAKEFLAGS="-j4" \
@@ -513,7 +512,6 @@ RUN apt-get -yqq update && \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=devel-base /buildout/ /
-COPY --from=dotnet-runtime /usr/share/dotnet /usr/share/dotnet
 
 RUN apt-get -yqq update && \
     DEBIAN_FRONTEND="noninteractive" apt-get install -y gpg-agent wget && \

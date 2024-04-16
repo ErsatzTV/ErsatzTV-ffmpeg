@@ -443,7 +443,6 @@ RUN ldconfig && \
     | awk '/local/ {print $3}' \
     | xargs -i cp -L {} /buildout/usr/lib/
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0-jammy-arm32v7 AS dotnet-runtime
 FROM ghcr.io/linuxserver/baseimage-ubuntu:arm32v7-jammy-05e08486-ls73 as runtime-base
 
 ENV MAKEFLAGS="-j4"
@@ -454,7 +453,6 @@ RUN apt-get -yqq update && \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=devel-base /buildout/ /
-COPY --from=dotnet-runtime /usr/share/dotnet /usr/share/dotnet
 
 RUN apt-get update && \
     apt-get install -y libicu-dev tzdata fontconfig fonts-noto-core fonts-noto-cjk libgdiplus && \

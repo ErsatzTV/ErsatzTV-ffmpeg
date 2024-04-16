@@ -504,14 +504,6 @@ RUN apt-get -yqq update && \
     apt-get autoremove -y && \
     apt-get clean -y
 
-RUN wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
-    dpkg -i packages-microsoft-prod.deb && \
-    rm packages-microsoft-prod.deb && \
-    apt-get -yqq update && \
-    apt-get install -yq aspnetcore-runtime-8.0 && \
-    apt-get autoremove -y && \
-    apt-get clean -y
-
 COPY --from=devel-base /buildout/ /
 
 RUN apt-get update && \
