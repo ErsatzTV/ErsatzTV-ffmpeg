@@ -3,7 +3,7 @@ FROM ghcr.io/linuxserver/baseimage-ubuntu:jammy as devel-base
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4"
 
-ARG LIBVA=2.18.0
+ARG LIBVA=2.21.0
 ENV AOM=v3.6.1 \
     FDKAAC=2.0.2 \
     FFMPEG_HARD=7.0 \
