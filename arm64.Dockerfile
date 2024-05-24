@@ -445,7 +445,7 @@ RUN apt-get -yqq update && \
 COPY --from=devel-base /buildout/ /
 
 RUN apt-get update && \
-    apt-get install -y libicu-dev tzdata fontconfig fonts-noto-core fonts-noto-cjk libgdiplus && \
+    apt-get install -y libicu-dev tzdata fontconfig fonts-noto-core fonts-noto-cjk libgdiplus libdrm2 && \
     rm -rf /var/lib/apt/lists/*
 
 CMD         ["--help"]
