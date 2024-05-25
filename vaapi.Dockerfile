@@ -6,7 +6,7 @@ ENV MAKEFLAGS="-j4"
 ARG LIBVA=2.21.0
 ENV AOM=v3.6.1 \
     FDKAAC=2.0.2 \
-    FFMPEG_HARD=7.0 \
+    FFMPEG_HARD=snapshot-git \
     FONTCONFIG=2.14.2 \
     FREETYPE=2.12.1 \
     FRIBIDI=1.0.13 \
@@ -243,9 +243,13 @@ RUN cd /tmp/libsrt && \
 
 # libva
 RUN mkdir -p /tmp/libva && \
-    curl -Lf \
-    https://github.com/intel/libva/archive/${LIBVA}.tar.gz | \
-    tar -zx --strip-components=1 -C /tmp/libva
+    git clone \
+    --branch master \
+    --depth 1 https://github.com/intel/libva.git \
+    /tmp/libva
+    #curl -Lf \
+    #https://github.com/intel/libva/archive/${LIBVA}.tar.gz | \
+    #tar -zx --strip-components=1 -C /tmp/libva
 RUN cd /tmp/libva && \
     ./autogen.sh && \
     ./configure \
@@ -428,16 +432,19 @@ RUN cd /tmp/xvid/build/generic && \
     make install
 
 # ffmpeg
-RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
-    FFMPEG=${FFMPEG_HARD}; \
-    else \
-    FFMPEG=${FFMPEG_VERSION}; \
-    fi && \
-    mkdir -p /tmp/ffmpeg && \
-    echo "https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2" && \
-    curl -Lf \
-    https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2 | \
-    tar -jx --strip-components=1 -C /tmp/ffmpeg
+#RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
+#    FFMPEG=${FFMPEG_HARD}; \
+#    else \
+#    FFMPEG=${FFMPEG_VERSION}; \
+#    fi && \
+#    mkdir -p /tmp/ffmpeg && \
+#    echo "https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2" && \
+#    curl -Lf \
+#    https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2 | \
+#    tar -jx --strip-components=1 -C /tmp/ffmpeg
+RUN mkdir -p /tmp/ffmpeg && \
+    git clone --branch master https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg && \
+    cd /tmp/ffmpeg && git revert --no-commit 1e2ac489a475198460e424fd4a3d166bb3f424a4
 RUN cd /tmp/ffmpeg && \
     ./configure \
     --disable-debug \
@@ -531,7 +538,7 @@ RUN apt-get -yqq update && \
     intel-media-va-driver-non-free libmfx1 libmfxgen1 libvpl2 \
     libegl-mesa0 libegl1-mesa libegl1-mesa-dev libgbm1 libgl1-mesa-dev libgl1-mesa-dri \
     libglapi-mesa libgles2-mesa-dev libglx-mesa0 libigdgmm12 libxatracker2 mesa-va-drivers \
-    mesa-vdpau-drivers mesa-vulkan-drivers va-driver-all \
+    mesa-vdpau-drivers mesa-vulkan-drivers va-driver-all vainfo hwinfo clinfo \
     i965-va-driver-shaders \
     && apt autoremove -y \
     && rm -rf /tmp/intel \
