@@ -13,10 +13,10 @@ jobs:
     strategy:
       matrix:
         include:
-          # - name: base
-          #   path: ''
-          #   suffix: ''
-          #   qemu: false
+          - name: base
+            path: ''
+            suffix: ''
+            qemu: false
           # - name: nvidia
           #   path: 'nvidia.'
           #   suffix: '-nvidia'
