@@ -1,41 +1,44 @@
-FROM ghcr.io/linuxserver/baseimage-ubuntu:jammy as devel-base
+FROM ghcr.io/linuxserver/baseimage-ubuntu:noble AS devel-base
 
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4"
 
-ARG LIBVA=2.21.0
-ENV AOM=v3.6.1 \
-    FDKAAC=2.0.2 \
+ARG LIBVA=2.22.0
+ENV AOM=v3.12.0 \
+    FDKAAC=2.0.3 \
     FFMPEG_HARD=snapshot-git \
-    FONTCONFIG=2.14.2 \
-    FREETYPE=2.12.1 \
-    FRIBIDI=1.0.13 \
-    KVAZAAR=2.2.0 \
+    FONTCONFIG=2.16.0 \
+    FREETYPE=2.13.3 \
+    FRIBIDI=1.0.16 \
+    GMMLIB=22.3.20 \
+    IHD=24.2.5 \
+    KVAZAAR=2.3.1 \
     LAME=3.100 \
-    LIBASS=0.17.1 \
-    LIBDAV1D=1.2.0 \
-    LIBDRM=2.4.100 \
-    LIBSRT=1.5.1 \
+    LIBASS=0.17.3 \
+    LIBDAV1D=1.5.1 \
+    LIBDRM=2.4.124 \
+    LIBSRT=1.5.4 \
     LIBVA=$LIBVA \
     LIBVDPAU=1.5 \
     LIBVIDSTAB=1.1.1 \
-    LIBWEBP=1.3.0 \
+    LIBWEBP=1.5.0 \
     OGG=1.3.5 \
     OPENCOREAMR=0.1.6 \
-    OPENJPEG=2.5.0 \
-    OPUS=1.3.1 \
+    OPENJPEG=2.5.3 \
+    OPUS=1.5.2 \
     THEORA=1.1.1 \
     VORBIS=1.3.7 \
-    VPX=1.13.0 \
-    X265=3.4 \
-    XVID=1.3.7 
+    VPX=1.15.0 \
+    X265=4.1 \
+    XVID=1.3.7 \
+    ZIMG=3.0.5
 
 RUN apt-get -yqq update && \
     apt-get install -y gpg-agent wget && \
-    wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | \
-      gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
-    echo 'deb [arch=amd64,i386 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu jammy arc' | \
-      tee  /etc/apt/sources.list.d/intel.gpu.jammy.list && \
+    wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | \
+    gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu noble unified" | \
+    tee  /etc/apt/sources.list.d/intel.gpu.noble.list && \
     apt-get -yqq update && \
     apt-get install -yq \
     libmfx-dev \
@@ -75,6 +78,7 @@ RUN apt-get -yqq update && \
     libxcb-shape0-dev \
     libxml2-dev \
     make \
+    meson \
     nasm \
     ninja-build \
     ocl-icd-opencl-dev \
@@ -87,11 +91,11 @@ RUN apt-get -yqq update && \
     python3-wheel \
     x11proto-xext-dev \
     xserver-xorg-dev \
+    xz-utils \
     yasm \
     zlib1g-dev && \
     apt-get autoremove -y && \
-    apt-get clean -y && \
-    pip3 install meson
+    apt-get clean -y
 
 # aom
 RUN mkdir -p /tmp/aom && \
@@ -150,8 +154,8 @@ RUN cd /tmp/freetype && \
 # fontconfig
 RUN mkdir -p /tmp/fontconfig && \
     curl -Lf \
-    https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG}.tar.gz | \
-    tar -zx --strip-components=1 -C /tmp/fontconfig
+    https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG}.tar.xz | \
+    tar -Jx --strip-components=1 -C /tmp/fontconfig
 RUN cd /tmp/fontconfig && \
     ./configure \
     --disable-static \
@@ -221,15 +225,16 @@ RUN cd /tmp/libass && \
 # libdrm
 RUN mkdir -p /tmp/libdrm && \
     curl -Lf \
-    https://dri.freedesktop.org/libdrm/libdrm-${LIBDRM}.tar.gz | \
-    tar -zx --strip-components=1 -C /tmp/libdrm
+    https://dri.freedesktop.org/libdrm/libdrm-${LIBDRM}.tar.xz | \
+    tar -Jx --strip-components=1 -C /tmp/libdrm
 RUN cd /tmp/libdrm && \
-    ./configure \
-    --disable-nouveau \
-    --disable-static \
-    --enable-shared && \
-    make && \
-    make install
+    meson setup \
+    --prefix=/usr --libdir=/usr/local/lib/x86_64-linux-gnu \
+    -Dvalgrind=disabled \
+    . build && \
+    ninja -C build && \
+    ninja -C build install && \
+    strip -d /usr/local/lib/x86_64-linux-gnu/libdrm*.so
 
 # libsrt
 RUN mkdir -p /tmp/libsrt && \
@@ -265,8 +270,38 @@ RUN mkdir -p /tmp/libvdpau && \
     --depth 1 https://gitlab.freedesktop.org/vdpau/libvdpau.git \
     /tmp/libvdpau
 RUN cd /tmp/libvdpau && \
-    meson setup -Ddocumentation=false build && \
+    meson setup \
+    --prefix=/usr --libdir=/usr/local/lib \
+    -Ddocumentation=false build && \
     ninja -C build install
+
+# gmm
+RUN mkdir -p /tmp/gmmlib && \
+    curl -Lf \
+    https://github.com/intel/gmmlib/archive/refs/tags/intel-gmmlib-${GMMLIB}.tar.gz | \
+    tar -zx --strip-components=1 -C /tmp/gmmlib
+RUN mkdir -p /tmp/gmmlib/build && \
+    cd /tmp/gmmlib/build && \
+    cmake \
+    -DCMAKE_BUILD_TYPE=Release \
+    .. && \
+    make && \
+    make install && \
+    strip -d /usr/local/lib/libigdgmm.so
+
+# iHD
+RUN mkdir -p /tmp/ihd && \
+    curl -Lf \
+    https://github.com/intel/media-driver/archive/refs/tags/intel-media-${IHD}.tar.gz | \
+    tar -zx --strip-components=1 -C /tmp/ihd
+RUN mkdir -p /tmp/ihd/build && \
+    cd /tmp/ihd/build && \
+    cmake \
+    -DLIBVA_DRIVERS_PATH=/usr/local/lib/x86_64-linux-gnu/dri/ \
+    .. && \
+    make && \
+    make install && \
+    strip -d /usr/local/lib/x86_64-linux-gnu/dri/iHD_drv_video.so
 
 # libwebp
 RUN mkdir -p /tmp/libwebp && \
@@ -324,7 +359,7 @@ RUN cd /tmp/openjpeg && \
 # opus
 RUN mkdir -p /tmp/opus && \
     curl -Lf \
-    https://archive.mozilla.org/pub/opus/opus-${OPUS}.tar.gz | \
+    https://downloads.xiph.org/releases/opus/opus-${OPUS}.tar.gz | \
     tar -zx --strip-components=1 -C /tmp/opus
 RUN cd /tmp/opus && \
     autoreconf -fiv && \
@@ -415,7 +450,7 @@ RUN cd /tmp/x264 && \
 # x265
 RUN mkdir -p /tmp/x265 && \
     curl -Lf \
-    http://anduin.linuxfromscratch.org/BLFS/x265/x265_${X265}.tar.gz | \
+    https://bitbucket.org/multicoreware/x265_git/downloads/x265_${X265}.tar.gz | \
     tar -zx --strip-components=1 -C /tmp/x265
 RUN cd /tmp/x265/build/linux && \
     ./multilib.sh && \
@@ -431,20 +466,32 @@ RUN cd /tmp/xvid/build/generic && \
     make && \
     make install
 
+# zimg
+RUN mkdir -p /tmp/zimg && \
+    git clone \
+    --branch release-${ZIMG} --depth 1 \
+    https://github.com/sekrit-twc/zimg.git \
+    /tmp/zimg
+RUN cd /tmp/zimg && \
+    ./autogen.sh && \
+    ./configure \
+    --disable-static \
+    --enable-shared && \
+    make && \
+    make install
+
 # ffmpeg
-#RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
-#    FFMPEG=${FFMPEG_HARD}; \
-#    else \
-#    FFMPEG=${FFMPEG_VERSION}; \
-#    fi && \
-#    mkdir -p /tmp/ffmpeg && \
-#    echo "https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2" && \
-#    curl -Lf \
-#    https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2 | \
-#    tar -jx --strip-components=1 -C /tmp/ffmpeg
-RUN mkdir -p /tmp/ffmpeg && \
-    git clone --branch master https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg && \
-    cd /tmp/ffmpeg && git revert --no-commit 1e2ac489a475198460e424fd4a3d166bb3f424a4
+RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
+   FFMPEG=${FFMPEG_HARD}; \
+   else \
+   FFMPEG=${FFMPEG_VERSION}; \
+   fi && \
+   mkdir -p /tmp/ffmpeg && \
+   echo "https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2" && \
+   curl -Lf \
+   https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2 | \
+   tar -jx --strip-components=1 -C /tmp/ffmpeg
+
 RUN cd /tmp/ffmpeg && \
     ./configure \
     --disable-debug \
@@ -476,6 +523,7 @@ RUN cd /tmp/ffmpeg && \
     --enable-libx264 \
     --enable-libx265 \
     --enable-libxvid \
+    --enable-libzimg \
     --enable-nonfree \
     --enable-opencl \
     --enable-openssl \
@@ -491,21 +539,36 @@ RUN cd /tmp/ffmpeg && \
 RUN ldconfig && \
     mkdir -p \
     /buildout/usr/local/bin \
-    /buildout/usr/lib && \
+    /buildout/usr/lib \
+    /buildout/usr/local/lib/x86_64-linux-gnu/dri \
+    /buildout/usr/local/lib/x86_64-linux-gnu/vdpau \
+    /buildout/usr/share/libdrm && \
     cp \
     /tmp/ffmpeg/ffmpeg \
     /buildout/usr/local/bin && \
     cp \
     /tmp/ffmpeg/ffprobe \
     /buildout/usr/local/bin && \
+    cp -a \
+    /usr/local/lib/lib*so* \
+    /buildout/usr/local/lib/ && \
+    cp -a \
+    /usr/local/lib/x86_64-linux-gnu/lib*so* \
+    /buildout/usr/local/lib/x86_64-linux-gnu/ && \
+    cp -a \
+    /usr/local/lib/x86_64-linux-gnu/dri/*.so \
+    /buildout/usr/local/lib/x86_64-linux-gnu/dri/ && \
+    #cp -a \
+    #/usr/local/lib/x86_64-linux-gnu/vdpau/*.so \
+    #/buildout/usr/local/lib/x86_64-linux-gnu/vdpau/ && \
+    cp -a \
+    /usr/share/libdrm/amdgpu.ids \
+    /buildout/usr/share/libdrm/ && \
     ldd /tmp/ffmpeg/ffmpeg \
     | awk '/local/ {print $3}' \
-    | xargs -i cp -L {} /buildout/usr/lib/ && \
-    cp -a \
-    /usr/local/lib/libdrm_* \
-    /buildout/usr/lib/
+    | xargs -i cp -L {} /buildout/usr/lib/
 
-FROM ghcr.io/linuxserver/baseimage-ubuntu:jammy as runtime-base
+FROM ghcr.io/linuxserver/baseimage-ubuntu:noble AS runtime-base
 
 ENV MAKEFLAGS="-j4" \
     LIBVA_DRIVERS_PATH="/usr/lib/x86_64-linux-gnu/dri" \
@@ -522,10 +585,10 @@ COPY --from=devel-base /buildout/ /
 
 RUN apt-get -yqq update && \
     DEBIAN_FRONTEND="noninteractive" apt-get install -y gpg-agent wget && \
-    wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | \
-      gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
-    echo 'deb [arch=amd64,i386 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu jammy arc' | \
-      tee  /etc/apt/sources.list.d/intel.gpu.jammy.list && \
+    wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | \
+    gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu noble unified" | \
+    tee  /etc/apt/sources.list.d/intel.gpu.noble.list && \
     apt-get -yqq update && \
     DEBIAN_FRONTEND="noninteractive" apt-get install -yq \
     tzdata \
@@ -533,10 +596,9 @@ RUN apt-get -yqq update && \
     fonts-noto-core \
     fonts-noto-cjk \
     libgdiplus \
-    vainfo \
-    intel-opencl-icd intel-level-zero-gpu level-zero \
-    intel-media-va-driver-non-free libmfx1 libmfxgen1 libvpl2 \
-    libegl-mesa0 libegl1-mesa libegl1-mesa-dev libgbm1 libgl1-mesa-dev libgl1-mesa-dri \
+    intel-opencl-icd=24.26.30049.10-950~24.04 intel-level-zero-gpu level-zero libze1 \
+    libmfxgen1 libvpl2 \
+    libegl-mesa0 libegl1-mesa-dev libgbm1 libgl1-mesa-dev libgl1-mesa-dri \
     libglapi-mesa libgles2-mesa-dev libglx-mesa0 libigdgmm12 libxatracker2 mesa-va-drivers \
     mesa-vdpau-drivers mesa-vulkan-drivers va-driver-all vainfo hwinfo clinfo \
     i965-va-driver-shaders \
