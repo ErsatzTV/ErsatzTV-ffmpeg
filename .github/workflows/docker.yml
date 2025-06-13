@@ -59,7 +59,7 @@ jobs:
           builder: ${{ steps.docker-buildx.outputs.name }}
           context: .
           file: ./${{ matrix.path }}Dockerfile
-          push: github.ref == 'refs/heads/main'
+          push: ${{ github.ref == 'refs/heads/main' }}
           tags: |
             jasongdove/ersatztv-ffmpeg:7.1.1${{ matrix.suffix }}
         if: ${{ matrix.name != 'arm64' && matrix.name != 'arm32v7' }}
@@ -70,7 +70,7 @@ jobs:
           builder: ${{ steps.docker-buildx.outputs.name }}
           context: .
           file: ./${{ matrix.path }}Dockerfile
-          push: github.ref == 'refs/heads/main'
+          push: ${{ github.ref == 'refs/heads/main' }}
           platforms: 'linux/arm64'
           tags: |
             jasongdove/ersatztv-ffmpeg:7.1.1${{ matrix.suffix }}
@@ -82,7 +82,7 @@ jobs:
           builder: ${{ steps.docker-buildx.outputs.name }}
           context: .
           file: ./${{ matrix.path }}Dockerfile
-          push: github.ref == 'refs/heads/main'
+          push: ${{ github.ref == 'refs/heads/main' }}
           platforms: 'linux/arm/v7'
           tags: |
             jasongdove/ersatztv-ffmpeg:7.1.1${{ matrix.suffix }}
