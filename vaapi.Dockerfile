@@ -30,7 +30,8 @@ ENV AOM=v3.12.0 \
     VORBIS=1.3.7 \
     VPX=1.15.0 \
     X265=4.1 \
-    XVID=1.3.7 
+    XVID=1.3.7 \
+    ZIMG=3.0.5
 
 RUN apt-get -yqq update && \
     apt-get install -y gpg-agent wget && \
@@ -465,6 +466,20 @@ RUN cd /tmp/xvid/build/generic && \
     make && \
     make install
 
+# zimg
+RUN mkdir -p /tmp/zimg && \
+    git clone \
+    --branch release-${ZIMG} --depth 1 \
+    https://github.com/sekrit-twc/zimg.git \
+    /tmp/zimg
+RUN cd /tmp/zimg && \
+    ./autogen.sh && \
+    ./configure \
+    --disable-static \
+    --enable-shared && \
+    make && \
+    make install
+
 # ffmpeg
 RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
    FFMPEG=${FFMPEG_HARD}; \
@@ -508,6 +523,7 @@ RUN cd /tmp/ffmpeg && \
     --enable-libx264 \
     --enable-libx265 \
     --enable-libxvid \
+    --enable-libzimg \
     --enable-nonfree \
     --enable-opencl \
     --enable-openssl \
