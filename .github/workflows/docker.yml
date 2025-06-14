@@ -17,10 +17,10 @@ jobs:
             path: ''
             suffix: ''
             qemu: false
-          # - name: nvidia
-          #   path: 'nvidia.'
-          #   suffix: '-nvidia'
-          #   qemu: false
+          - name: nvidia
+            path: 'nvidia.'
+            suffix: '-nvidia'
+            qemu: false
           - name: vaapi
             path: 'vaapi.'
             suffix: '-vaapi'

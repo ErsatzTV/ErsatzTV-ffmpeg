@@ -1,4 +1,4 @@
-FROM nvcr.io/nvidia/cuda:11.8.0-devel-ubuntu22.04 AS devel-base
+FROM ghcr.io/linuxserver/baseimage-ubuntu:noble AS devel-base
 
 ENV DEBIAN_FRONTEND="noninteractive" \
     MAKEFLAGS="-j4" \
@@ -81,7 +81,6 @@ RUN apt-get -yqq update && \
     perl \
     pkg-config \
     python3-venv \
-    python3-pip \
     x11proto-xext-dev \
     xserver-xorg-dev \
     xz-utils \
@@ -96,7 +95,7 @@ RUN apt-get -yqq update && \
     cd /tmp/rust && \
     ./install.sh && \
     cargo install cargo-c cbindgen --locked && \
-    python3 -m venv /pyenv && \
+    python3 -m venv /lsiopy && \
     pip install -U --no-cache-dir \
         pip \
         setuptools \
@@ -239,7 +238,7 @@ RUN mkdir -p /tmp/libdav1d && \
     --depth 1 https://github.com/videolan/dav1d.git \
     /tmp/libdav1d
 RUN mkdir /tmp/libdav1d/build && cd /tmp/libdav1d/build && \
-    meson setup .. && \
+    meson setup -Denable_tools=false -Denable_tests=false --libdir /usr/local/lib .. && \
     ninja install
 
 # libgl
@@ -253,13 +252,13 @@ RUN cd /tmp/libgl && \
     build && \
     ninja -C build install && \
     strip -d \
-    /usr/local/lib/x86_64-linux-gnu/libEGL.so \
-    /usr/local/lib/x86_64-linux-gnu/libGLdispatch.so \
-    /usr/local/lib/x86_64-linux-gnu/libGLESv1_CM.so \
-    /usr/local/lib/x86_64-linux-gnu/libGLESv2.so \
-    /usr/local/lib/x86_64-linux-gnu/libGL.so \
-    /usr/local/lib/x86_64-linux-gnu/libGLX.so \
-    /usr/local/lib/x86_64-linux-gnu/libOpenGL.so
+    /usr/local/lib64/libEGL.so \
+    /usr/local/lib64/libGLdispatch.so \
+    /usr/local/lib64/libGLESv1_CM.so \
+    /usr/local/lib64/libGLESv2.so \
+    /usr/local/lib64/libGL.so \
+    /usr/local/lib64/libGLX.so \
+    /usr/local/lib64/libOpenGL.so
 
 # libdrm
 RUN mkdir -p /tmp/libdrm && \
@@ -283,7 +282,7 @@ RUN mkdir -p /tmp/libdovi && \
     /tmp/libdovi
 RUN cd /tmp/libdovi/dolby_vision && \
     cargo cinstall --release && \
-    strip -d /usr/local/lib/x86_64-linux-gnu/libdovi.so
+    strip -d /usr/local/lib64/libdovi.so
 
 # libplacebo
 RUN mkdir -p /tmp/libplacebo && \
@@ -292,7 +291,9 @@ RUN mkdir -p /tmp/libplacebo && \
     --recursive https://code.videolan.org/videolan/libplacebo \
     /tmp/libplacebo
 RUN cd /tmp/libplacebo && \
-    meson build --buildtype release && \
+    meson setup \
+    --prefix=/usr --libdir=/usr/local/lib/x86_64-linux-gnu \
+    . build --buildtype release && \
     ninja -C build install
 
 # libsrt
@@ -580,7 +581,6 @@ RUN cd /tmp/ffmpeg && \
     --enable-libfribidi \
     --enable-libkvazaar \
     --enable-libmp3lame \
-    --enable-libnpp \
     --enable-libopencore-amrnb \
     --enable-libopencore-amrwb \
     --enable-libopenjpeg \
@@ -609,8 +609,6 @@ RUN cd /tmp/ffmpeg && \
     --enable-vdpau \
     --enable-version3 \
     --enable-vulkan \
-    --extra-cflags="-I/tmp/ffnvcodec/include/ffnvcodec -I/usr/local/cuda/include/" \
-    --extra-ldflags="-L/usr/local/cuda/lib64 -L/usr/local/cuda/lib32/" \
     --extra-libs=-ldl \
     --extra-libs=-lpthread && \
     make
@@ -631,6 +629,9 @@ RUN /usr/local/lib/rustlib/uninstall.sh && \
     cp \
     /tmp/ffmpeg/ffprobe \
     /buildout/usr/local/bin && \
+    cp -a \
+    /usr/local/lib64/lib*so* \
+    /buildout/usr/local/lib/x86_64-linux-gnu/ && \
     cp -a \
     /usr/local/lib/lib*so* \
     /buildout/usr/local/lib/ && \
@@ -653,7 +654,7 @@ RUN /usr/local/lib/rustlib/uninstall.sh && \
     'libnvidia-opencl.so.1' > \
     /buildout/etc/OpenCL/vendors/nvidia.icd
 
-FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04 AS runtime-base
+FROM ghcr.io/linuxserver/baseimage-ubuntu:noble AS runtime-base
 
 COPY --from=devel-base /buildout/ /
 
