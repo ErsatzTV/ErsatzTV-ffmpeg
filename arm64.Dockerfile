@@ -1,30 +1,31 @@
-FROM ghcr.io/linuxserver/baseimage-ubuntu:arm64v8-jammy as devel-base
+FROM ghcr.io/linuxserver/baseimage-ubuntu:arm64v8-noble AS devel-base
 
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4"
 
-ENV AOM=v3.6.1 \
-    FDKAAC=2.0.2 \
-    FFMPEG_HARD=7.0 \
-    FONTCONFIG=2.14.2 \
-    FREETYPE=2.12.1 \
-    FRIBIDI=1.0.13 \
-    KVAZAAR=2.2.0 \
+ENV AOM=v3.12.0 \
+    FDKAAC=2.0.3 \
+    FFMPEG_HARD=7.1.1 \
+    FONTCONFIG=2.16.0 \
+    FREETYPE=2.13.3 \
+    FRIBIDI=1.0.16 \
+    KVAZAAR=2.3.1 \
     LAME=3.100 \
-    LIBASS=0.17.1 \
+    LIBASS=0.17.3 \
     LIBDAV1D=1.2.1 \
-    LIBSRT=1.5.1 \
+    LIBSRT=1.5.4 \
     LIBVIDSTAB=1.1.1 \
-    LIBWEBP=1.3.0 \
+    LIBWEBP=1.5.0 \
     OGG=1.3.5 \
     OPENCOREAMR=0.1.6 \
-    OPENJPEG=2.5.0 \
-    OPUS=1.3.1 \
+    OPENJPEG=2.5.3 \
+    OPUS=1.5.2 \
     THEORA=1.1.1 \
     VORBIS=1.3.7 \
-    VPX=1.13.0 \
+    VPX=1.15.0 \
     X265=3.3 \
-    XVID=1.3.7 
+    XVID=1.3.7 \
+    ZIMG=3.0.5
 
 RUN apt-get -yqq update && \ 
     apt-get -yq --no-install-recommends install -y \
@@ -53,6 +54,7 @@ RUN apt-get -yqq update && \
     libxcb-shape0-dev \
     libxml2-dev \
     make \
+    meson \
     nasm \
     ninja-build \
     patch \
@@ -64,11 +66,11 @@ RUN apt-get -yqq update && \
     python3-wheel \
     x11proto-xext-dev \
     xserver-xorg-dev \
+    xz-utils \
     yasm \
     zlib1g-dev && \
     apt-get autoremove -y && \
-    apt-get clean -y && \
-    pip3 install meson
+    apt-get clean -y
 
 # aom
 RUN mkdir -p /tmp/aom && \
@@ -127,8 +129,8 @@ RUN cd /tmp/freetype && \
 # fontconfig
 RUN mkdir -p /tmp/fontconfig && \
     curl -Lf \
-    https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG}.tar.gz | \
-    tar -zx --strip-components=1 -C /tmp/fontconfig
+    https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG}.tar.xz | \
+    tar -Jx --strip-components=1 -C /tmp/fontconfig
 RUN cd /tmp/fontconfig && \
     ./configure \
     --disable-static \
@@ -261,7 +263,7 @@ RUN cd /tmp/openjpeg && \
 # opus
 RUN mkdir -p /tmp/opus && \
     curl -Lf \
-    https://archive.mozilla.org/pub/opus/opus-${OPUS}.tar.gz | \
+    https://downloads.xiph.org/releases/opus/opus-${OPUS}.tar.gz | \
     tar -zx --strip-components=1 -C /tmp/opus
 RUN cd /tmp/opus && \
     autoreconf -fiv && \
@@ -370,6 +372,20 @@ RUN cd /tmp/xvid/build/generic && \
     make && \
     make install
 
+# zimg
+RUN mkdir -p /tmp/zimg && \
+    git clone \
+    --branch release-${ZIMG} --depth 1 \
+    https://github.com/sekrit-twc/zimg.git \
+    /tmp/zimg
+RUN cd /tmp/zimg && \
+    ./autogen.sh && \
+    ./configure \
+    --disable-static \
+    --enable-shared && \
+    make && \
+    make install
+
 # ffmpeg
 RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
     FFMPEG=${FFMPEG_HARD}; \
@@ -411,6 +427,7 @@ RUN cd /tmp/ffmpeg && \
     --enable-libx264 \
     --enable-libx265 \
     --enable-libxvid \
+    --enable-libzimg \
     --enable-nonfree \
     --enable-openssl \
     --enable-small \
@@ -433,7 +450,7 @@ RUN ldconfig && \
     | awk '/local/ {print $3}' \
     | xargs -i cp -L {} /buildout/usr/lib/
 
-FROM ghcr.io/linuxserver/baseimage-ubuntu:arm64v8-jammy as runtime-base
+FROM ghcr.io/linuxserver/baseimage-ubuntu:arm64v8-noble AS runtime-base
 
 ENV MAKEFLAGS="-j4"
 
