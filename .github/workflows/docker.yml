@@ -17,14 +17,6 @@ jobs:
             path: ''
             suffix: ''
             qemu: false
-          - name: nvidia
-            path: 'nvidia.'
-            suffix: '-nvidia'
-            qemu: false
-          - name: vaapi
-            path: 'vaapi.'
-            suffix: '-vaapi'
-            qemu: false
           - name: arm32v7
             path: 'arm32v7.'
             suffix: '-arm'
@@ -61,7 +53,7 @@ jobs:
           file: ./${{ matrix.path }}Dockerfile
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: |
-            jasongdove/ersatztv-ffmpeg:7.1.1${{ matrix.suffix }}
+            jasongdove/ersatztv-ffmpeg:7.1.1
         if: ${{ matrix.name != 'arm64' && matrix.name != 'arm32v7' }}
 
       - name: Build and push

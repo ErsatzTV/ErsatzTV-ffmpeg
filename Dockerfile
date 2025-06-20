@@ -1,7 +1,8 @@
 FROM ghcr.io/linuxserver/baseimage-ubuntu:noble AS devel-base
 
 ENV DEBIAN_FRONTEND="noninteractive"
-ENV MAKEFLAGS="-j4"
+ENV MAKEFLAGS="-j4" \
+    PATH="/root/.cargo/bin:${PATH}"
 
 ENV AOM=v3.12.0 \
     FDKAAC=2.0.3 \
@@ -9,31 +10,58 @@ ENV AOM=v3.12.0 \
     FONTCONFIG=2.16.0 \
     FREETYPE=2.13.3 \
     FRIBIDI=1.0.16 \
+    GMMLIB=22.3.20 \
+    IHD=24.2.5 \
     KVAZAAR=2.3.1 \
     LAME=3.100 \
     LIBASS=0.17.3 \
     LIBDAV1D=1.5.1 \
+    LIBDOVI=2.2.0 \
     LIBDRM=2.4.124 \
+    LIBGL=1.7.0 \
+    LIBPLACEBO=7.349.0 \
     LIBSRT=1.5.4 \
-    LIBVIDSTAB=1.1.0 \
+    LIBVA=2.22.0 \
+    LIBVDPAU=1.5 \
     LIBWEBP=1.5.0 \
+    NVCODEC=11.1.5.3 \
     OGG=1.3.5 \
     OPENCOREAMR=0.1.6 \
     OPENJPEG=2.5.3 \
     OPUS=1.5.2 \
+    SHADERC=v2025.1 \
     THEORA=1.1.1 \
     VORBIS=1.3.7 \
     VPX=1.15.0 \
+    VULKANSDK=vulkan-sdk-1.4.304.1 \
     X265=4.1 \
     XVID=1.3.7 \
     ZIMG=3.0.5
 
-RUN apt-get -yqq update && \ 
+RUN apt-get -yqq update && \
+    apt-get install -y gpg-agent wget && \
+    wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | \
+    gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu noble unified" | \
+    tee  /etc/apt/sources.list.d/intel.gpu.noble.list && \
+    apt-get -yqq update && \
+    apt-get install -yq \
+    libmfx-dev \
+    libegl1-mesa-dev \
+    libgl1-mesa-dev \
+    libgles2-mesa-dev \
+    libigc-dev \
+    intel-igc-cm \
+    libigdfcl-dev \
+    libigfxcmrt-dev \
+    level-zero-dev \
+    libvpl-dev && \
     apt-get -yq --no-install-recommends install -y \
     autoconf \
     automake \
     bzip2 \
     ca-certificates \
+    clang \
     cmake \
     curl \
     diffutils \
@@ -43,6 +71,7 @@ RUN apt-get -yqq update && \
     gcc \
     git \
     gperf \
+    jq \
     libexpat1-dev \
     libxext-dev \
     libgcc-9-dev \
@@ -52,27 +81,45 @@ RUN apt-get -yqq update && \
     libssl-dev \
     libtool \
     libv4l-dev \
+    libwayland-dev \
+    libwayland-egl-backend-dev \
     libx11-dev \
+    libx11-xcb-dev \
+    libxcb-dri2-0-dev \
+    libxcb-dri3-dev \
+    libxcb-glx0-dev \
+    libxcb-present-dev \
     libxcb-shape0-dev \
     libxml2-dev \
+    libxrandr-dev \
     make \
-    meson \
     nasm \
-    ninja-build \
+    nvidia-cuda-toolkit \
+    ocl-icd-opencl-dev \
     patch \
     perl \
     pkg-config \
-    python3 \
-    python3-pip\
-    python3-setuptools \
-    python3-wheel \
+    python3-venv \
     x11proto-xext-dev \
     xserver-xorg-dev \
     xz-utils \
     yasm \
     zlib1g-dev && \
     apt-get autoremove -y && \
-    apt-get clean -y
+    apt-get clean -y && \
+    mkdir -p /tmp/rust && \
+    RUST_VERSION=$(curl -fsX GET https://api.github.com/repos/rust-lang/rust/releases/latest | jq -r '.tag_name') && \
+    curl -fo /tmp/rust.tar.gz -L "https://static.rust-lang.org/dist/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu.tar.gz" && \
+    tar xf /tmp/rust.tar.gz -C /tmp/rust --strip-components=1 && \
+    cd /tmp/rust && \
+    ./install.sh && \
+    cargo install cargo-c cbindgen --locked && \
+    python3 -m venv /lsiopy && \
+    pip install -U --no-cache-dir \
+        pip \
+        setuptools \
+        wheel && \
+    pip install --no-cache-dir cmake==3.31.6 mako meson ninja packaging ply pyyaml
 
 # aom
 RUN mkdir -p /tmp/aom && \
@@ -92,17 +139,6 @@ RUN cd /tmp/aom && \
     make && \
     make install
 
-# dav1d
-RUN mkdir -p /tmp/dav1d && \
-    git clone \
-    --branch ${LIBDAV1D} \
-    --depth 1 https://github.com/videolan/dav1d.git \
-    /tmp/dav1d
-RUN mkdir /tmp/dav1d/build && cd /tmp/dav1d/build && \
-    meson setup -Denable_tools=false -Denable_tests=false --libdir /usr/local/lib .. && \
-    ninja && \
-    ninja install
-
 # fdk-aac
 RUN mkdir -p /tmp/fdk-aac && \
     curl -Lf \
@@ -114,6 +150,16 @@ RUN cd /tmp/fdk-aac && \
     --disable-static \
     --enable-shared && \
     make && \
+    make install && \
+    strip -d /usr/local/lib/libfdk-aac.so
+
+# ffnvcodec
+RUN mkdir -p /tmp/ffnvcodec && \
+    git clone \
+    --branch n${NVCODEC} \
+    --depth 1 https://github.com/FFmpeg/nv-codec-headers \
+    /tmp/ffnvcodec
+RUN cd /tmp/ffnvcodec && \
     make install
 
 # freetype
@@ -126,7 +172,8 @@ RUN cd /tmp/freetype && \
     --disable-static \
     --enable-shared && \
     make && \
-    make install
+    make install && \
+    strip -d /usr/local/lib/libfreetype.so
 
 # fontconfig
 RUN mkdir -p /tmp/fontconfig && \
@@ -138,7 +185,8 @@ RUN cd /tmp/fontconfig && \
     --disable-static \
     --enable-shared && \
     make && \
-    make install
+    make install && \
+    strip -d /usr/local/lib/libfontconfig.so
 
 # fribidi
 RUN mkdir -p /tmp/fribidi && \
@@ -151,7 +199,8 @@ RUN cd /tmp/fribidi && \
     --disable-static \
     --enable-shared && \
     make -j 1 && \
-    make install
+    make install && \
+    strip -d /usr/local/lib/libfribidi.so
 
 # kvazaar
 RUN mkdir -p /tmp/kvazaar && \
@@ -164,7 +213,8 @@ RUN cd /tmp/kvazaar && \
     --disable-static \
     --enable-shared && \
     make && \
-    make install
+    make install && \
+    strip -d /usr/local/lib/libkvazaar.so
 
 # lame
 RUN mkdir -p /tmp/lame && \
@@ -197,7 +247,37 @@ RUN cd /tmp/libass && \
     --disable-static \
     --enable-shared && \
     make && \
-    make install
+    make install && \
+    strip -d /usr/local/lib/libass.so
+
+# libdav1d
+RUN mkdir -p /tmp/libdav1d && \
+    git clone \
+    --branch ${LIBDAV1D} \
+    --depth 1 https://github.com/videolan/dav1d.git \
+    /tmp/libdav1d
+RUN mkdir /tmp/libdav1d/build && cd /tmp/libdav1d/build && \
+    meson setup -Denable_tools=false -Denable_tests=false --libdir /usr/local/lib .. && \
+    ninja install
+
+# libgl
+RUN mkdir -p /tmp/libgl && \
+    curl -Lf \
+    https://gitlab.freedesktop.org/glvnd/libglvnd/-/archive/v${LIBGL}/libglvnd-v${LIBGL}.tar.gz | \
+    tar -xz --strip-components=1 -C /tmp/libgl
+RUN cd /tmp/libgl && \
+    meson setup \
+    --buildtype=release \
+    build && \
+    ninja -C build install && \
+    strip -d \
+    /usr/local/lib64/libEGL.so \
+    /usr/local/lib64/libGLdispatch.so \
+    /usr/local/lib64/libGLESv1_CM.so \
+    /usr/local/lib64/libGLESv2.so \
+    /usr/local/lib64/libGL.so \
+    /usr/local/lib64/libGLX.so \
+    /usr/local/lib64/libOpenGL.so
 
 # libdrm
 RUN mkdir -p /tmp/libdrm && \
@@ -213,6 +293,28 @@ RUN cd /tmp/libdrm && \
     ninja -C build install && \
     strip -d /usr/local/lib/x86_64-linux-gnu/libdrm*.so
 
+# libdovi
+RUN mkdir -p /tmp/libdovi && \
+    git clone \
+    --branch ${LIBDOVI} \
+    https://github.com/quietvoid/dovi_tool.git \
+    /tmp/libdovi
+RUN cd /tmp/libdovi/dolby_vision && \
+    cargo cinstall --release && \
+    strip -d /usr/local/lib64/libdovi.so
+
+# libplacebo
+RUN mkdir -p /tmp/libplacebo && \
+    git clone \
+    --branch v${LIBPLACEBO} \
+    --recursive https://code.videolan.org/videolan/libplacebo \
+    /tmp/libplacebo
+RUN cd /tmp/libplacebo && \
+    meson setup \
+    --prefix=/usr --libdir=/usr/local/lib/x86_64-linux-gnu \
+    . build --buildtype release && \
+    ninja -C build install
+
 # libsrt
 RUN mkdir -p /tmp/libsrt && \
     curl -Lf \
@@ -222,6 +324,81 @@ RUN cd /tmp/libsrt && \
     cmake . && \
     make && \
     make install
+
+# libva
+RUN mkdir -p /tmp/libva && \
+    curl -Lf \
+    https://github.com/intel/libva/archive/${LIBVA}.tar.gz | \
+    tar -zx --strip-components=1 -C /tmp/libva
+RUN cd /tmp/libva && \
+    ./autogen.sh && \
+    ./configure \
+    --disable-static \
+    --enable-shared && \
+    make && \
+    make install && \
+    strip -d \
+    /usr/local/lib/libva.so \
+    /usr/local/lib/libva-drm.so \
+    /usr/local/lib/libva-wayland.so
+
+# libvdpau
+RUN mkdir -p /tmp/libvdpau && \
+    git clone \
+    --branch ${LIBVDPAU} \
+    --depth 1 https://gitlab.freedesktop.org/vdpau/libvdpau.git \
+    /tmp/libvdpau
+RUN cd /tmp/libvdpau && \
+    meson setup \
+    --prefix=/usr --libdir=/usr/local/lib \
+    -Ddocumentation=false \
+    build && \
+    ninja -C build install && \
+    strip -d /usr/local/lib/libvdpau.so
+
+# gmm
+RUN mkdir -p /tmp/gmmlib && \
+    curl -Lf \
+    https://github.com/intel/gmmlib/archive/refs/tags/intel-gmmlib-${GMMLIB}.tar.gz | \
+    tar -zx --strip-components=1 -C /tmp/gmmlib
+RUN mkdir -p /tmp/gmmlib/build && \
+    cd /tmp/gmmlib/build && \
+    cmake \
+    -DCMAKE_BUILD_TYPE=Release \
+    .. && \
+    make && \
+    make install && \
+    strip -d /usr/local/lib/libigdgmm.so
+
+# iHD
+RUN mkdir -p /tmp/ihd && \
+    curl -Lf \
+    https://github.com/intel/media-driver/archive/refs/tags/intel-media-${IHD}.tar.gz | \
+    tar -zx --strip-components=1 -C /tmp/ihd
+RUN mkdir -p /tmp/ihd/build && \
+    cd /tmp/ihd/build && \
+    cmake \
+    -DLIBVA_DRIVERS_PATH=/usr/local/lib/x86_64-linux-gnu/dri/ \
+    .. && \
+    make && \
+    make install && \
+    strip -d /usr/local/lib/x86_64-linux-gnu/dri/iHD_drv_video.so
+
+# shaderc
+RUN mkdir -p /tmp/shaderc && \
+    git clone \
+    --branch ${SHADERC} \
+    --depth 1 https://github.com/google/shaderc.git \
+    /tmp/shaderc
+RUN cd /tmp/shaderc && \
+    ./utils/git-sync-deps && \
+    mkdir -p build && \
+    cd build && \
+    cmake -GNinja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    .. && \
+    ninja install
 
 # libwebp
 RUN mkdir -p /tmp/libwebp && \
@@ -257,7 +434,8 @@ RUN cd /tmp/opencore-amr && \
     --disable-static \
     --enable-shared  && \
     make && \
-    make install
+    make install && \
+    strip -d /usr/local/lib/libopencore-amr*.so
 
 # openjpeg
 RUN mkdir -p /tmp/openjpeg && \
@@ -287,7 +465,8 @@ RUN cd /tmp/opus && \
     --disable-static \
     --enable-shared && \
     make && \
-    make install
+    make install && \
+    strip -d /usr/local/lib/libopus.so
 
 # theora
 RUN mkdir -p /tmp/theora && \
@@ -308,17 +487,6 @@ RUN cd /tmp/theora && \
     ./configure \
     --disable-static \
     --enable-shared && \
-    make && \
-    make install
-
-# vid.stab
-RUN mkdir -p /tmp/vid.stab && \
-    curl -Lf \
-    https://github.com/georgmartius/vid.stab/archive/v${LIBVIDSTAB}.tar.gz | \
-    tar -zx --strip-components=1 -C /tmp/vid.stab
-RUN cd /tmp/vid.stab && \
-    cmake \
-    -DBUILD_STATIC_LIBS=0 . && \
     make && \
     make install
 
@@ -352,6 +520,32 @@ RUN cd /tmp/vpx && \
     --enable-vp8 \
     --enable-vp9 \
     --enable-vp9-highbitdepth && \
+    make && \
+    make install
+
+# vulkan
+RUN mkdir -p /tmp/vulkan-headers && \
+    git clone \
+    --branch ${VULKANSDK} \
+    --depth 1 https://github.com/KhronosGroup/Vulkan-Headers.git \
+    /tmp/vulkan-headers
+RUN cd /tmp/vulkan-headers && \
+    cmake -S . -B build/ && \
+    cmake --install build --prefix /usr/local
+
+RUN mkdir -p /tmp/vulkan-loader && \
+    git clone \
+    --branch ${VULKANSDK} \
+    --depth 1 https://github.com/KhronosGroup/Vulkan-Loader.git \
+    /tmp/vulkan-loader
+RUN cd /tmp/vulkan-loader && \
+    mkdir -p build && \
+    cd build && \
+    cmake \
+    -D CMAKE_BUILD_TYPE=Release \
+    -D VULKAN_HEADERS_INSTALL_DIR=/usr/local/lib/x86_64-linux-gnu \
+    -D CMAKE_INSTALL_PREFIX=/usr/local \
+    .. && \
     make && \
     make install
 
@@ -411,11 +605,16 @@ RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
     curl -Lf \
     https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2 | \
     tar -jx --strip-components=1 -C /tmp/ffmpeg
+
 RUN cd /tmp/ffmpeg && \
     ./configure \
+    --ld=clang++ \
     --disable-debug \
     --disable-doc \
     --disable-ffplay \
+    --enable-cuda \
+    --enable-cuda-llvm \
+    --enable-cuvid \
     --enable-ffprobe \
     --enable-fontconfig \
     --enable-gpl \
@@ -423,18 +622,22 @@ RUN cd /tmp/ffmpeg && \
     --enable-libdav1d \
     --enable-libass \
     --enable-libfdk_aac \
+    --enable-libfontconfig \
     --enable-libfreetype \
+    --enable-libfribidi \
     --enable-libkvazaar \
     --enable-libmp3lame \
     --enable-libopencore-amrnb \
     --enable-libopencore-amrwb \
     --enable-libopenjpeg \
     --enable-libopus \
+    --enable-libplacebo \
+    --enable-libshaderc \
     --enable-libsrt \
     --enable-libtheora \
     --enable-libv4l2 \
-    --enable-libvidstab \
     --enable-libvorbis \
+    --enable-libvpl \
     --enable-libvpx \
     --enable-libwebp \
     --enable-libxml2 \
@@ -443,20 +646,30 @@ RUN cd /tmp/ffmpeg && \
     --enable-libxvid \
     --enable-libzimg \
     --enable-nonfree \
+    --enable-nvdec \
+    --enable-nvenc \
+    --enable-opencl \
     --enable-openssl \
     --enable-small \
     --enable-stripping \
+    --enable-vaapi \
+    --enable-vdpau \
     --enable-version3 \
+    --enable-vulkan \
     --extra-libs=-ldl \
     --extra-libs=-lpthread && \
     make
 
-RUN ldconfig && \
+RUN /usr/local/lib/rustlib/uninstall.sh && \
+    ldconfig && \
     mkdir -p \
     /buildout/usr/local/bin \
-    /buildout/usr/local/lib \
-    /buildout/usr/local/lib/x86_64-linux-gnu \
-    /buildout/usr/lib && \
+    /buildout/usr/lib \
+    /buildout/usr/local/lib/x86_64-linux-gnu/dri \
+    /buildout/usr/local/lib/x86_64-linux-gnu/vdpau \
+    /buildout/usr/local/share/vulkan \
+    /buildout/usr/share/libdrm \
+    /buildout/etc/OpenCL/vendors && \
     cp \
     /tmp/ffmpeg/ffmpeg \
     /buildout/usr/local/bin && \
@@ -467,26 +680,84 @@ RUN ldconfig && \
     /usr/local/lib/lib*so* \
     /buildout/usr/local/lib/ && \
     cp -a \
+    /usr/local/lib64/lib*so* \
+    /buildout/usr/local/lib/x86_64-linux-gnu/ && \
+    cp -a \
     /usr/local/lib/x86_64-linux-gnu/lib*so* \
     /buildout/usr/local/lib/x86_64-linux-gnu/ && \
-    ldd /tmp/ffmpeg/ffmpeg \
-    | awk '/local/ {print $3}' \
-    | xargs -i cp -L {} /buildout/usr/lib/
+    cp -a \
+    /usr/local/lib/x86_64-linux-gnu/dri/*.so \
+    /buildout/usr/local/lib/x86_64-linux-gnu/dri/ && \
+    cp -a \
+    /usr/share/libdrm/amdgpu.ids \
+    /buildout/usr/share/libdrm/ && \
+    cp -a \
+    /usr/local/share/vulkan/* \
+    /buildout/usr/local/share/vulkan/ && \
+    echo \
+    'libnvidia-opencl.so.1' > \
+    /buildout/etc/OpenCL/vendors/nvidia.icd
 
 FROM ghcr.io/linuxserver/baseimage-ubuntu:noble AS runtime-base
 
-ENV MAKEFLAGS="-j4"
-
-RUN apt-get -yqq update && \
-    DEBIAN_FRONTEND="noninteractive" apt-get install -yq --no-install-recommends ca-certificates expat libgomp1 libharfbuzz-bin libxml2 libxcb-shape0 libv4l-0 \
-    && apt autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY --from=devel-base /buildout/ /
 
-RUN apt-get update && \
-    apt-get install -y libicu-dev tzdata fontconfig fonts-noto-core fonts-noto-cjk libgdiplus && \
-    rm -rf /var/lib/apt/lists/*
+ARG DEBIAN_FRONTEND="noninteractive"
+
+ENV MAKEFLAGS="-j4" \
+    LIBVA_DRIVERS_PATH="/usr/local/lib/x86_64-linux-gnu/dri" \
+    LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu" \
+    LIBVA_MESSAGING_LEVEL=0 \
+    LIBVA_DISPLAY=drm \
+    NVIDIA_DRIVER_CAPABILITIES="compute,video,utility" \
+    NVIDIA_VISIBLE_DEVICES="all"
+
+RUN apt-get -yqq update && \
+    apt-get install -y gpg-agent wget && \
+    wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | \
+    gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu noble unified" | \
+    tee  /etc/apt/sources.list.d/intel.gpu.noble.list && \
+    apt-get -yqq update && \
+    apt-get install -yq --no-install-recommends \
+    tzdata \
+    fontconfig \
+    fonts-noto-core \
+    fonts-noto-cjk \
+    libgdiplus \
+    libicu-dev \
+    intel-opencl-icd=24.26.30049.10-950~24.04 intel-level-zero-gpu level-zero libze1 \
+    libmfxgen1 libvpl2 \
+    libegl-mesa0 libegl1-mesa-dev libgbm1 libgl1-mesa-dev libgl1-mesa-dri \
+    libglapi-mesa libgles2-mesa-dev libglx-mesa0 libigdgmm12 libxatracker2 mesa-va-drivers \
+    mesa-vdpau-drivers mesa-vulkan-drivers va-driver-all vainfo hwinfo clinfo \
+    i965-va-driver-shaders \
+    ca-certificates \
+    expat \
+    libgomp1 \
+    libllvm15 \
+    libharfbuzz-bin \
+    libv4l-0 \
+    libwayland-client0 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxcb-dri2-0 \
+    libxcb-dri3-0 \
+    libxcb-present0 \
+    libxcb-randr0 \
+    libxcb-shape0 \
+    libxcb-shm0 \
+    libxcb-sync1 \
+    libxcb-xfixes0 \
+    libxcb1 \
+    libxext6 \
+    libxfixes3 \
+    libxshmfence1 \
+    libxml2 \
+    ocl-icd-libopencl1 \
+    wget && \
+    apt-get autoremove -y && \
+    apt-get clean -y
 
 CMD         ["--help"]
 ENTRYPOINT  ["ffmpeg"]
