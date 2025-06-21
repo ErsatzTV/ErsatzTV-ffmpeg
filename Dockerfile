@@ -705,8 +705,7 @@ COPY --from=devel-base /buildout/ /
 ARG DEBIAN_FRONTEND="noninteractive"
 
 ENV MAKEFLAGS="-j4" \
-    LIBVA_DRIVERS_PATH="/usr/local/lib/x86_64-linux-gnu/dri" \
-    LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu" \
+    LD_LIBRARY_PATH="/usr/local/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu" \
     LIBVA_MESSAGING_LEVEL=0 \
     LIBVA_DISPLAY=drm \
     NVIDIA_DRIVER_CAPABILITIES="compute,video,utility" \
@@ -757,7 +756,9 @@ RUN apt-get -yqq update && \
     ocl-icd-libopencl1 \
     wget && \
     apt-get autoremove -y && \
-    apt-get clean -y
+    apt-get clean -y && \
+    rm /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so && \
+    ln -s /usr/local/lib/x86_64-linux-gnu/dri/iHD_drv_video.so /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so
 
 CMD         ["--help"]
 ENTRYPOINT  ["ffmpeg"]
