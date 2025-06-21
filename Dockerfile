@@ -378,11 +378,11 @@ RUN mkdir -p /tmp/ihd && \
 RUN mkdir -p /tmp/ihd/build && \
     cd /tmp/ihd/build && \
     cmake \
-    -DLIBVA_DRIVERS_PATH=/usr/lib/x86_64-linux-gnu/dri/ \
+    -DLIBVA_DRIVERS_PATH=/usr/local/lib/x86_64-linux-gnu/dri/ \
     .. && \
     make && \
     make install && \
-    strip -d /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so
+    strip -d /usr/local/lib/x86_64-linux-gnu/dri/iHD_drv_video.so
 
 # shaderc
 RUN mkdir -p /tmp/shaderc && \
@@ -665,8 +665,8 @@ RUN /usr/local/lib/rustlib/uninstall.sh && \
     mkdir -p \
     /buildout/usr/local/bin \
     /buildout/usr/lib \
-    /buildout/usr/lib/x86_64-linux-gnu/dri \
-    /buildout/usr/lib/x86_64-linux-gnu/vdpau \
+    /buildout/usr/local/lib/x86_64-linux-gnu/dri \
+    /buildout/usr/local/lib/x86_64-linux-gnu/vdpau \
     /buildout/usr/local/share/vulkan \
     /buildout/usr/share/libdrm \
     /buildout/etc/OpenCL/vendors && \
@@ -686,8 +686,8 @@ RUN /usr/local/lib/rustlib/uninstall.sh && \
     /usr/local/lib/x86_64-linux-gnu/lib*so* \
     /buildout/usr/local/lib/x86_64-linux-gnu/ && \
     cp -a \
-    /usr/lib/x86_64-linux-gnu/dri/*.so \
-    /buildout/usr/lib/x86_64-linux-gnu/dri/ && \
+    /usr/local/lib/x86_64-linux-gnu/dri/*.so \
+    /buildout/usr/local/lib/x86_64-linux-gnu/dri/ && \
     cp -a \
     /usr/share/libdrm/amdgpu.ids \
     /buildout/usr/share/libdrm/ && \
@@ -705,7 +705,7 @@ COPY --from=devel-base /buildout/ /
 ARG DEBIAN_FRONTEND="noninteractive"
 
 ENV MAKEFLAGS="-j4" \
-    LIBVA_DRIVERS_PATH="/usr/lib/x86_64-linux-gnu/dri" \
+    LIBVA_DRIVERS_PATH="/usr/local/lib/x86_64-linux-gnu/dri" \
     LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu" \
     LIBVA_MESSAGING_LEVEL=0 \
     LIBVA_DISPLAY=drm \
