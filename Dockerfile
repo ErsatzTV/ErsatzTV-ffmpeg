@@ -705,7 +705,7 @@ COPY --from=devel-base /buildout/ /
 ARG DEBIAN_FRONTEND="noninteractive"
 
 ENV MAKEFLAGS="-j4" \
-    LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu" \
+    LD_LIBRARY_PATH="/usr/local/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu" \
     LIBVA_MESSAGING_LEVEL=0 \
     LIBVA_DISPLAY=drm \
     NVIDIA_DRIVER_CAPABILITIES="compute,video,utility" \
