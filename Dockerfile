@@ -1,4 +1,7 @@
-FROM ghcr.io/linuxserver/baseimage-ubuntu:noble AS devel-base
+ARG base_image=ghcr.io/linuxserver/baseimage-ubuntu
+ARG base_image_tag=noble
+
+FROM ${base_image}:${base_image_tag} AS devel-base
 
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4" \
@@ -116,9 +119,9 @@ RUN apt-get -yqq update && \
     cargo install cargo-c cbindgen --locked && \
     python3 -m venv /lsiopy && \
     pip install -U --no-cache-dir \
-        pip \
-        setuptools \
-        wheel && \
+    pip \
+    setuptools \
+    wheel && \
     pip install --no-cache-dir cmake==3.31.6 mako meson ninja packaging ply pyyaml
 
 # aom
