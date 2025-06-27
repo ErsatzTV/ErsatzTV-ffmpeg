@@ -44,6 +44,7 @@ jobs:
         with:
           username: ${{ secrets.docker_hub_username }}
           password: ${{ secrets.docker_hub_access_token }}
+        if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build and push
         uses: docker/build-push-action@v5
