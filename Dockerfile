@@ -13,8 +13,8 @@ ENV AOM=v3.12.0 \
     FONTCONFIG=2.16.0 \
     FREETYPE=2.13.3 \
     FRIBIDI=1.0.16 \
-    GMMLIB=22.3.20 \
-    IHD=24.2.5 \
+    GMMLIB=22.7.1 \
+    IHD=25.1.4 \
     KVAZAAR=2.3.1 \
     LAME=3.100 \
     LIBASS=0.17.3 \
@@ -701,7 +701,7 @@ RUN /usr/local/lib/rustlib/uninstall.sh && \
     'libnvidia-opencl.so.1' > \
     /buildout/etc/OpenCL/vendors/nvidia.icd
 
-FROM ghcr.io/linuxserver/baseimage-ubuntu:noble AS runtime-base
+FROM ${base_image}:${base_image_tag} AS runtime-base
 
 COPY --from=devel-base /buildout/ /
 
