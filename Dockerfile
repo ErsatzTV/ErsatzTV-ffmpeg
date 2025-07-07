@@ -728,7 +728,7 @@ RUN apt-get -yqq update && \
     fonts-noto-cjk \
     libgdiplus \
     libicu-dev \
-    intel-opencl-icd=24.26.30049.10-950~24.04 intel-level-zero-gpu level-zero libze1 \
+    level-zero libze1 \
     libmfx1 libmfxgen1 libvpl2 \
     libegl-mesa0 libegl1-mesa-dev libgbm1 libgl1-mesa-dev libgl1-mesa-dri \
     libglapi-mesa libgles2-mesa-dev libglx-mesa0 libigdgmm12 libxatracker2 mesa-va-drivers \
@@ -758,6 +758,22 @@ RUN apt-get -yqq update && \
     libxml2 \
     ocl-icd-libopencl1 \
     wget && \
+    mkdir -p /tmp/intel && cd /tmp/intel && \
+    wget -q https://github.com/intel/intel-graphics-compiler/releases/download/igc-1.0.17537.20/intel-igc-core_1.0.17537.20_amd64.deb && \
+    wget -q https://github.com/intel/intel-graphics-compiler/releases/download/igc-1.0.17537.20/intel-igc-opencl_1.0.17537.20_amd64.deb && \
+    wget -q https://github.com/intel/compute-runtime/releases/download/24.35.30872.22/intel-level-zero-gpu-legacy1_1.3.30872.22_amd64.deb && \
+    wget -q https://github.com/intel/compute-runtime/releases/download/24.35.30872.22/intel-opencl-icd-legacy1_24.35.30872.22_amd64.deb && \
+    wget -q https://github.com/intel/compute-runtime/releases/download/24.35.30872.22/ww35.sum && \
+    sha256sum --ignore-missing -c ww35.sum && \
+    wget -q https://github.com/intel/intel-graphics-compiler/releases/download/v2.12.5/intel-igc-core-2_2.12.5+19302_amd64.deb && \
+    wget -q https://github.com/intel/intel-graphics-compiler/releases/download/v2.12.5/intel-igc-opencl-2_2.12.5+19302_amd64.deb && \
+    wget -q https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/intel-ocloc_25.22.33944.8-0_amd64.deb && \
+    wget -q https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/intel-opencl-icd_25.22.33944.8-0_amd64.deb && \
+    wget -q https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/libze-intel-gpu1_25.22.33944.8-0_amd64.deb && \
+    wget -q https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/ww22.sum && \
+    sha256sum --ignore-missing -c ww22.sum && \
+    dpkg -i /tmp/intel/*.deb && \
+    rm -rf /tmp/intel && \
     apt-get autoremove -y && \
     apt-get clean -y && \
     rm /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so && \
