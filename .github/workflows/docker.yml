@@ -85,6 +85,8 @@ jobs:
           labels: ${{ steps.extract-docker-metadata.outputs.labels }},"arm64"
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            BASE_IMAGE_TAG=7.1.1
         if: ${{ matrix.name != 'arm64' && matrix.name != 'arm32v7' }}
 
       - name: Build and push
@@ -100,6 +102,8 @@ jobs:
           labels: ${{ steps.extract-docker-metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            BASE_IMAGE_TAG=7.1.1-arm64
         if: ${{ matrix.name == 'arm64' }}
 
       - name: Build and push
@@ -115,4 +119,6 @@ jobs:
           labels: ${{ steps.extract-docker-metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            BASE_IMAGE_TAG=7.1.1-arm32v7
         if: ${{ matrix.name == 'arm32v7' }}
