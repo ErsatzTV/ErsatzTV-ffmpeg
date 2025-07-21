@@ -120,5 +120,5 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            BASE_IMAGE_TAG=7.1.1-arm32v7
+            BASE_IMAGE_TAG=7.1.1-arm
         if: ${{ matrix.name == 'arm32v7' }}
