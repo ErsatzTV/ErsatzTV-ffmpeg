@@ -160,6 +160,11 @@ jobs:
   merge:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
     needs:
       - build-amd64
       - build-arm
