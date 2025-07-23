@@ -1,4 +1,7 @@
-FROM ghcr.io/linuxserver/baseimage-ubuntu:arm64v8-noble AS devel-base
+ARG BASE_IMAGE=ghcr.io/linuxserver/baseimage-ubuntu
+ARG BASE_IMAGE_TAG=arm64v8-noble
+
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS devel-base
 
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4"
@@ -450,7 +453,7 @@ RUN ldconfig && \
     | awk '/local/ {print $3}' \
     | xargs -i cp -L {} /buildout/usr/lib/
 
-FROM ghcr.io/linuxserver/baseimage-ubuntu:arm64v8-noble AS runtime-base
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS runtime-base
 
 ENV MAKEFLAGS="-j4"
 

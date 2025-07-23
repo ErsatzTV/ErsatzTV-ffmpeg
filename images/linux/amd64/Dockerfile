@@ -1,7 +1,7 @@
-ARG base_image=ghcr.io/linuxserver/baseimage-ubuntu
-ARG base_image_tag=noble
+ARG BASE_IMAGE=ghcr.io/linuxserver/baseimage-ubuntu
+ARG BASE_IMAGE_TAG=noble
 
-FROM ${base_image}:${base_image_tag} AS devel-base
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS devel-base
 
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4" \
@@ -701,7 +701,7 @@ RUN /usr/local/lib/rustlib/uninstall.sh && \
     'libnvidia-opencl.so.1' > \
     /buildout/etc/OpenCL/vendors/nvidia.icd
 
-FROM ${base_image}:${base_image_tag} AS runtime-base
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS runtime-base
 
 COPY --from=devel-base /buildout/ /
 
