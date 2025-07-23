@@ -1,6 +1,6 @@
 # ErsatzTV FFmpeg
 
-This repo contains docker images that are used by [ErsatzTV](https://github.com/jasongdove/ErsatzTV).
+This repo contains docker images that are used by [ErsatzTV](https://github.com/ErsatzTV/ErsatzTV).
 
 Uses [`ghcr.io/linuxserver/baseimage-ubuntu`](https://ghcr.io/linuxserver/baseimage-ubuntu) as base image.
 
@@ -30,7 +30,7 @@ The images built from this repository support various hardware accelerations, in
 To use the `ffmpeg` image in your Dockerfile, you can specify it as follows:
 
 ```dockerfile
-FROM jasongdove/ersatztv-ffmpeg:latest
+FROM ghcr.io/ersatztv/ersatztv-ffmpeg:7.1.1
 
 # Your additional Dockerfile instructions here
 ```
