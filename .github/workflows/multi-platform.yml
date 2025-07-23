@@ -9,7 +9,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ersatztv-ffmpeg
+  IMAGE_NAME: ghcr.io/ersatztv/ersatztv-ffmpeg
   RELEASE_VERSION: 7.1.1
 
 jobs:
