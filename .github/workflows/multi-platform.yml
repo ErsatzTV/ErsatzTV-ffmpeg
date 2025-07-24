@@ -17,11 +17,6 @@ jobs:
     name: Build amd64 Docker Image
     runs-on: ubuntu-latest
     if: contains(github.event.head_commit.message, '[no build]') == false
-    permissions:
-      contents: read
-      packages: write
-      attestations: write
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -53,7 +48,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push by digest
+      - name: Build and push
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -65,7 +60,6 @@ jobs:
           push: ${{ github.ref == 'refs/heads/main' }}
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ env.IMAGE_NAME }}
-          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
         if: ${{ github.ref == 'refs/heads/main' }}
@@ -84,14 +78,9 @@ jobs:
           retention-days: 1
   
   build-arm:
-    name: Build arm/v7 and arm64 Docker Images
+    name: Build ARM Docker Images
     runs-on: ubuntu-24.04-arm
     if: contains(github.event.head_commit.message, '[no build]') == false
-    permissions:
-      contents: read
-      packages: write
-      attestations: write
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -127,7 +116,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push by digest
+      - name: Build and push
         id: build
         uses: docker/build-push-action@v6
         with:
@@ -139,7 +128,6 @@ jobs:
           push: ${{ github.ref == 'refs/heads/main' }}
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ env.IMAGE_NAME }}
-          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
 
       - name: Export digest
         if: ${{ github.ref == 'refs/heads/main' }}
@@ -160,11 +148,6 @@ jobs:
   merge:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-      attestations: write
-      id-token: write
     needs:
       - build-amd64
       - build-arm
