@@ -97,7 +97,6 @@ RUN apt-get -yqq update && \
     libxrandr-dev \
     make \
     nasm \
-    nvidia-cuda-toolkit \
     ocl-icd-opencl-dev \
     patch \
     perl \
@@ -110,6 +109,9 @@ RUN apt-get -yqq update && \
     zlib1g-dev && \
     apt-get autoremove -y && \
     apt-get clean -y && \
+    mkdir -p /tmp/cuda && \
+    wget https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_520.61.05_linux.run && \
+    sh cuda_11.8.0_520.61.05_linux.run && \
     mkdir -p /tmp/rust && \
     RUST_VERSION=$(curl -fsX GET https://api.github.com/repos/rust-lang/rust/releases/latest | jq -r '.tag_name') && \
     curl -fo /tmp/rust.tar.gz -L "https://static.rust-lang.org/dist/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu.tar.gz" && \
