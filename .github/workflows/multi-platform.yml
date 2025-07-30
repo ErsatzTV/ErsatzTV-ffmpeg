@@ -31,6 +31,9 @@ jobs:
             platform: linux/arm/v7
             os: ubuntu-latest
     steps:
+      - name: Clean tools folder
+        run: cd /opt && find . -maxdepth 1 -mindepth 1 '!' -path ./containerd '!' -path ./actionarchivecache '!' -path ./runner '!' -path ./runner-cache -exec rm -rf '{}' ';'
+
       - name: Checkout
         uses: actions/checkout@v4
 

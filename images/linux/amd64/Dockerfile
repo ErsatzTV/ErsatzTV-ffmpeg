@@ -97,7 +97,6 @@ RUN apt-get -yqq update && \
     libxrandr-dev \
     make \
     nasm \
-    nvidia-cuda-toolkit \
     ocl-icd-opencl-dev \
     patch \
     perl \
@@ -123,6 +122,13 @@ RUN apt-get -yqq update && \
     setuptools \
     wheel && \
     pip install --no-cache-dir cmake==3.31.6 mako meson ninja packaging ply pyyaml
+
+# cuda
+RUN mkdir -p /tmp/cuda && \
+    cd /tmp/cuda && \
+    wget -q https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_520.61.05_linux.run && \
+    sh cuda_11.8.0_520.61.05_linux.run --silent --toolkit --override && \
+    rm cuda_11.8.0_520.61.05_linux.run
 
 # aom
 RUN mkdir -p /tmp/aom && \
