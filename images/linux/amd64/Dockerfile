@@ -71,7 +71,9 @@ RUN apt-get -yqq update && \
     doxygen \
     expat \
     g++ \
+    g++-11 \
     gcc \
+    gcc-11 \
     git \
     gperf \
     jq \
@@ -109,10 +111,6 @@ RUN apt-get -yqq update && \
     zlib1g-dev && \
     apt-get autoremove -y && \
     apt-get clean -y && \
-    mkdir -p /tmp/cuda && \
-    cd /tmp/cuda && \
-    wget https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_520.61.05_linux.run && \
-    sh cuda_11.8.0_520.61.05_linux.run && \
     mkdir -p /tmp/rust && \
     RUST_VERSION=$(curl -fsX GET https://api.github.com/repos/rust-lang/rust/releases/latest | jq -r '.tag_name') && \
     curl -fo /tmp/rust.tar.gz -L "https://static.rust-lang.org/dist/rust-${RUST_VERSION}-x86_64-unknown-linux-gnu.tar.gz" && \
@@ -126,6 +124,15 @@ RUN apt-get -yqq update && \
     setuptools \
     wheel && \
     pip install --no-cache-dir cmake==3.31.6 mako meson ninja packaging ply pyyaml
+
+# cuda
+RUN mkdir -p /tmp/cuda && \
+    cd /tmp/cuda && \
+    wget -q https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_520.61.05_linux.run && \
+    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 110 --slave /usr/bin/g++ g++ /usr/bin/g++-11 && \
+    update-alternatives --set gcc /usr/bin/gcc-11 && \
+    sh cuda_11.8.0_520.61.05_linux.run --silent --toolkit && \
+    update-alternatives --remove-all gcc
 
 # aom
 RUN mkdir -p /tmp/aom && \
