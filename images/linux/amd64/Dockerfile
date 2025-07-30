@@ -129,10 +129,10 @@ RUN apt-get -yqq update && \
 RUN mkdir -p /tmp/cuda && \
     cd /tmp/cuda && \
     wget -q https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_520.61.05_linux.run && \
-    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 110 --slave /usr/bin/g++ g++ /usr/bin/g++-11 && \
+    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 && \
     update-alternatives --set gcc /usr/bin/gcc-11 && \
     sh cuda_11.8.0_520.61.05_linux.run --silent --toolkit && \
-    update-alternatives --remove-all gcc
+    update-alternatives --remove gcc /usr/bin/gcc-11
 
 # aom
 RUN mkdir -p /tmp/aom && \
