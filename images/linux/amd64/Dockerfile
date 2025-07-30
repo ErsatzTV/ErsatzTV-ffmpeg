@@ -70,9 +70,9 @@ RUN apt-get -yqq update && \
     diffutils \
     doxygen \
     expat \
-    g++ \
+    g++-13 \
     g++-11 \
-    gcc \
+    gcc-13 \
     gcc-11 \
     git \
     gperf \
