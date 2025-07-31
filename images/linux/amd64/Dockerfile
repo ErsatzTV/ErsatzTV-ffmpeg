@@ -126,9 +126,9 @@ RUN apt-get -yqq update && \
 # cuda
 RUN mkdir -p /tmp/cuda && \
     cd /tmp/cuda && \
-    wget -q https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_520.61.05_linux.run && \
-    sh cuda_11.8.0_520.61.05_linux.run --silent --toolkit --override && \
-    rm cuda_11.8.0_520.61.05_linux.run
+    wget -q https://developer.download.nvidia.com/compute/cuda/11.4.4/local_installers/cuda_11.4.4_470.82.01_linux.run && \
+    sh cuda_11.4.4_470.82.01_linux.run --silent --toolkit --override && \
+    rm cuda_11.4.4_470.82.01_linux.run
 
 # aom
 RUN mkdir -p /tmp/aom && \
