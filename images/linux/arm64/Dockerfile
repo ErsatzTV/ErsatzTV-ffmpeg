@@ -413,6 +413,7 @@ RUN cd /tmp/ffmpeg && \
     --enable-libass \
     --enable-libfdk_aac \
     --enable-libfreetype \
+    --enable-libharfbuzz \
     --enable-libkvazaar \
     --enable-libmp3lame \
     --enable-libopencore-amrnb \

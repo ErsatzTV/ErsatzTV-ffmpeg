@@ -634,6 +634,7 @@ RUN cd /tmp/ffmpeg && \
     --enable-libfontconfig \
     --enable-libfreetype \
     --enable-libfribidi \
+    --enable-libharfbuzz \
     --enable-libkvazaar \
     --enable-libmp3lame \
     --enable-libopencore-amrnb \
