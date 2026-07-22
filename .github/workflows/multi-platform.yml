@@ -10,7 +10,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/ersatztv/ersatztv-ffmpeg
-  RELEASE_VERSION: 7.1.1
+  RELEASE_VERSION: 8.1.2
 
 jobs:
   build:
