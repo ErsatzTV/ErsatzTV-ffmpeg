@@ -66,7 +66,7 @@ jobs:
           context: .
           file: ./images/${{ matrix.platform }}/Dockerfile
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
           platforms: ${{ matrix.platform }}
           push: ${{ github.ref == 'refs/heads/main' }}
           labels: ${{ steps.meta.outputs.labels }}
