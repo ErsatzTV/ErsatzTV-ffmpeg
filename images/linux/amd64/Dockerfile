@@ -277,16 +277,17 @@ RUN mkdir -p /tmp/libgl && \
 RUN cd /tmp/libgl && \
     meson setup \
     --buildtype=release \
+    --libdir=lib/x86_64-linux-gnu \
     build && \
     ninja -C build install && \
     strip -d \
-    /usr/local/lib64/libEGL.so \
-    /usr/local/lib64/libGLdispatch.so \
-    /usr/local/lib64/libGLESv1_CM.so \
-    /usr/local/lib64/libGLESv2.so \
-    /usr/local/lib64/libGL.so \
-    /usr/local/lib64/libGLX.so \
-    /usr/local/lib64/libOpenGL.so
+    /usr/local/lib/x86_64-linux-gnu/libEGL.so \
+    /usr/local/lib/x86_64-linux-gnu/libGLdispatch.so \
+    /usr/local/lib/x86_64-linux-gnu/libGLESv1_CM.so \
+    /usr/local/lib/x86_64-linux-gnu/libGLESv2.so \
+    /usr/local/lib/x86_64-linux-gnu/libGL.so \
+    /usr/local/lib/x86_64-linux-gnu/libGLX.so \
+    /usr/local/lib/x86_64-linux-gnu/libOpenGL.so
 
 # libdrm
 RUN mkdir -p /tmp/libdrm && \
@@ -309,8 +310,8 @@ RUN mkdir -p /tmp/libdovi && \
     https://github.com/quietvoid/dovi_tool.git \
     /tmp/libdovi
 RUN cd /tmp/libdovi/dolby_vision && \
-    cargo cinstall --release && \
-    strip -d /usr/local/lib64/libdovi.so
+    cargo cinstall --release --libdir=/usr/local/lib/x86_64-linux-gnu && \
+    strip -d /usr/local/lib/x86_64-linux-gnu/libdovi.so
 
 # libplacebo
 RUN mkdir -p /tmp/libplacebo && \
@@ -342,14 +343,15 @@ RUN mkdir -p /tmp/libva && \
 RUN cd /tmp/libva && \
     ./autogen.sh && \
     ./configure \
+    --libdir=/usr/local/lib/x86_64-linux-gnu \
     --disable-static \
     --enable-shared && \
     make && \
     make install && \
     strip -d \
-    /usr/local/lib/libva.so \
-    /usr/local/lib/libva-drm.so \
-    /usr/local/lib/libva-wayland.so
+    /usr/local/lib/x86_64-linux-gnu/libva.so \
+    /usr/local/lib/x86_64-linux-gnu/libva-drm.so \
+    /usr/local/lib/x86_64-linux-gnu/libva-wayland.so
 
 # libvdpau
 RUN mkdir -p /tmp/libvdpau && \
@@ -374,10 +376,11 @@ RUN mkdir -p /tmp/gmmlib/build && \
     cd /tmp/gmmlib/build && \
     cmake \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_LIBDIR=lib/x86_64-linux-gnu \
     .. && \
     make && \
     make install && \
-    strip -d /usr/local/lib/libigdgmm.so
+    strip -d /usr/local/lib/x86_64-linux-gnu/libigdgmm.so
 
 # iHD
 RUN mkdir -p /tmp/ihd && \
@@ -690,9 +693,6 @@ RUN /usr/local/lib/rustlib/uninstall.sh && \
     /usr/local/lib/lib*so* \
     /buildout/usr/local/lib/ && \
     cp -a \
-    /usr/local/lib64/lib*so* \
-    /buildout/usr/local/lib/x86_64-linux-gnu/ && \
-    cp -a \
     /usr/local/lib/x86_64-linux-gnu/lib*so* \
     /buildout/usr/local/lib/x86_64-linux-gnu/ && \
     cp -a \
@@ -715,7 +715,7 @@ COPY --from=devel-base /buildout/ /
 ARG DEBIAN_FRONTEND="noninteractive"
 
 ENV MAKEFLAGS="-j4" \
-    LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu" \
+    LD_LIBRARY_PATH="/usr/local/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu" \
     LIBVA_MESSAGING_LEVEL=0 \
     LIBVA_DRIVERS_PATH="/usr/local/lib/x86_64-linux-gnu/dri:/usr/lib/x86_64-linux-gnu/dri" \
     LIBVA_DISPLAY=drm \
