@@ -390,6 +390,7 @@ RUN cd /tmp/zimg && \
     make install
 
 # ffmpeg
+COPY patches/ /tmp/ffmpeg-patches/
 RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
     FFMPEG=${FFMPEG_HARD}; \
     else \
@@ -399,7 +400,12 @@ RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
     echo "https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2" && \
     curl -Lf \
     https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2 | \
-    tar -jx --strip-components=1 -C /tmp/ffmpeg
+    tar -jx --strip-components=1 -C /tmp/ffmpeg && \
+    for p in /tmp/ffmpeg-patches/*.patch; do \
+    [ -e "$p" ] || continue; \
+    echo "Applying FFmpeg patch: $p"; \
+    patch -d /tmp/ffmpeg -p1 < "$p" || exit 1; \
+    done
 RUN cd /tmp/ffmpeg && \
     ./configure \
     --disable-debug \
@@ -437,6 +443,7 @@ RUN cd /tmp/ffmpeg && \
     --enable-small \
     --enable-stripping \
     --enable-version3 \
+    --extra-version=t11674 \
     --extra-libs=-ldl \
     --extra-libs=-lpthread && \
     make
