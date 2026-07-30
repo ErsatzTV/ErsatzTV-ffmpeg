@@ -1,0 +1,44 @@
+From 664f697e80a1e9f4ab397a04a7b2d14d55f685e0 Mon Sep 17 00:00:00 2001
+From: McKenzie Pepper <mapepp2@protonmail.com>
+Date: Wed, 29 Jul 2026 20:37:24 -0400
+Subject: [PATCH 2/2] lavfi/qsvvpp: seed output surface timestamp from the
+ input
+
+MFX writes the output surface's Data.TimeStamp itself for most VPP operations,
+but composition (mfxExtVPPComposite) leaves it untouched. ff_qsvvpp_filter_frame
+then unconditionally overwrites the frame pts with that stale value, clobbering
+the correct pts query_frame() had already copied from propref.
+
+The result on a padded composite pipeline is a pts sequence of 0,0,0,0,1,2,3,4
+instead of 0,512,1024,... The frame rate converter sees non-advancing
+timestamps and drops nearly every frame: 2 of 120 survive to the muxer, while
+-fps_mode passthrough shows all 120 frames were produced correctly all along.
+
+Seeding the output timestamp from the input before RunFrameVPPAsync fixes it and
+is a no-op wherever MFX supplies its own timestamp.
+---
+ libavfilter/qsvvpp.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/libavfilter/qsvvpp.c b/libavfilter/qsvvpp.c
+index c3685f1..60195ee 100644
+--- a/libavfilter/qsvvpp.c
++++ b/libavfilter/qsvvpp.c
+@@ -1000,6 +1000,14 @@ int ff_qsvvpp_filter_frame(QSVVPPContext *s, AVFilterLink *inlink, AVFrame *picr
+         if (ret)
+             return ret;
+ 
++        /* Seed the output timestamp from the input. Most VPP operations have
++         * MFX write the output surface's TimeStamp itself, in which case this
++         * is overwritten and costs nothing; but composition (mfxExtVPPComposite)
++         * leaves it untouched, and the stale value then clobbers the correct pts
++         * that query_frame() copied from propref -- which makes the frame rate
++         * converter drop nearly every frame as non-advancing. */
++        out_frame->surface.Data.TimeStamp = in_frame->surface.Data.TimeStamp;
++
+         do {
+             ret = MFXVideoVPP_RunFrameVPPAsync(s->session, &in_frame->surface,
+                                                &out_frame->surface, NULL, &sync);
+-- 
+2.55.0
+

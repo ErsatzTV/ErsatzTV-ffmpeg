@@ -443,7 +443,7 @@ RUN cd /tmp/ffmpeg && \
     --enable-small \
     --enable-stripping \
     --enable-version3 \
-    --extra-version=t11674 \
+    --extra-version=t11674-qsvpad \
     --extra-libs=-ldl \
     --extra-libs=-lpthread && \
     make
