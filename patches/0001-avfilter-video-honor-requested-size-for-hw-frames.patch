@@ -1,28 +1,91 @@
 diff --git a/libavfilter/video.c b/libavfilter/video.c
-index 3f23a12c07..b4bf5ff848 100644
 --- a/libavfilter/video.c
 +++ b/libavfilter/video.c
-@@ -64,8 +64,22 @@ AVFrame *ff_default_get_video_buffer2(AVFilterLink *link, int w, int h, int alig
+@@ -64,48 +64,57 @@ AVFrame *ff_default_get_video_buffer2(AVFilterLink *link, int w, int h, int alig
              return NULL;
  
          ret = av_hwframe_get_buffer(li->l.hw_frames_ctx, frame, 0);
 -        if (ret < 0)
 +        if (ret < 0) {
              av_frame_free(&frame);
-+            return frame;
-+        }
+-
+-        return frame;
+-    }
+-
+-    if (!li->frame_pool) {
+-        li->frame_pool = ff_frame_pool_video_init(CONFIG_MEMORY_POISONING
+-                                                     ? NULL
+-                                                     : av_buffer_allocz,
+-                                                  w, h, link->format, align);
+-        if (!li->frame_pool)
+-            return NULL;
+-    } else {
+-        if (ff_frame_pool_get_video_config(li->frame_pool,
+-                                           &pool_width, &pool_height,
+-                                           &pool_format, &pool_align) < 0) {
+             return NULL;
+         }
+-
+-        if (FFALIGN(pool_width,  pool_align) != FFALIGN(w, align) ||
+-            FFALIGN(pool_height, pool_align) != FFALIGN(h, align) ||
+-            pool_format != link->format || pool_align != align) {
+-
+-            ff_frame_pool_uninit(&li->frame_pool);
++    } else {
++        if (!li->frame_pool) {
+             li->frame_pool = ff_frame_pool_video_init(CONFIG_MEMORY_POISONING
+                                                          ? NULL
+                                                          : av_buffer_allocz,
+                                                       w, h, link->format, align);
+             if (!li->frame_pool)
+                 return NULL;
++        } else {
++            if (ff_frame_pool_get_video_config(li->frame_pool,
++                                               &pool_width, &pool_height,
++                                               &pool_format, &pool_align) < 0) {
++                return NULL;
++            }
 +
-+        /* av_hwframe_get_buffer() returns a frame sized to the (possibly
-+         * alignment-padded) surface dimensions of the frames context. Honor
-+         * the caller's requested logical dimensions instead, matching the
-+         * software allocation path below. Otherwise a filter requesting a
-+         * writable buffer via ff_inlink_make_frame_writable() (e.g. an in-place
-+         * hardware overlay) gets a frame larger than the link, silently
-+         * changing the picture size and dropping cropping downstream. */
-+        if (frame->width >= w && frame->height >= h) {
-+            frame->width  = w;
-+            frame->height = h;
-+        }
++            if (FFALIGN(pool_width,  pool_align) != FFALIGN(w, align) ||
++                FFALIGN(pool_height, pool_align) != FFALIGN(h, align) ||
++                pool_format != link->format || pool_align != align) {
++
++                ff_frame_pool_uninit(&li->frame_pool);
++                li->frame_pool = ff_frame_pool_video_init(CONFIG_MEMORY_POISONING
++                                                             ? NULL
++                                                             : av_buffer_allocz,
++                                                          w, h, link->format, align);
++                if (!li->frame_pool)
++                    return NULL;
++            }
+         }
+-    }
  
-         return frame;
-     }
+-    frame = ff_frame_pool_get(li->frame_pool);
+-    if (!frame)
+-        return NULL;
++        frame = ff_frame_pool_get(li->frame_pool);
++        if (!frame)
++            return NULL;
+ 
+-    frame->sample_aspect_ratio = link->sample_aspect_ratio;
+-    frame->colorspace  = link->colorspace;
+-    frame->color_range = link->color_range;
+-    frame->alpha_mode  = link->alpha_mode;
++        frame->sample_aspect_ratio = link->sample_aspect_ratio;
++        frame->colorspace  = link->colorspace;
++        frame->color_range = link->color_range;
++        frame->alpha_mode  = link->alpha_mode;
++    }
++
++    /* Neither path returns the requested size: the hw path reports the frames
++     * context's padded surface size, the pool path the size of whichever request
++     * created the pool. Shrinking is safe, the buffer is always at least
++     * FFALIGN(w/h, align) large. */
++    if (frame->width >= w && frame->height >= h) {
++        frame->width  = w;
++        frame->height = h;
++    }
+ 
+     return frame;
+ }
