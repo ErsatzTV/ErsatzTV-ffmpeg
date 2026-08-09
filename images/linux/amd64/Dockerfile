@@ -27,6 +27,7 @@ ENV AOM=v3.14.1 \
     LIBVA=2.23.0 \
     LIBVDPAU=1.5 \
     LIBWEBP=1.6.0 \
+    MESA=26.0.3 \
     NVCODEC=11.1.5.3 \
     OGG=1.3.5 \
     OPENCOREAMR=0.1.6 \
@@ -62,6 +63,7 @@ RUN apt-get -yqq update && \
     apt-get -yq --no-install-recommends install -y \
     autoconf \
     automake \
+    bison \
     bzip2 \
     ca-certificates \
     clang \
@@ -70,11 +72,13 @@ RUN apt-get -yqq update && \
     diffutils \
     doxygen \
     expat \
+    flex \
     g++ \
     gcc \
     git \
     gperf \
     jq \
+    libelf-dev \
     libexpat1-dev \
     libxext-dev \
     libgcc-9-dev \
@@ -95,6 +99,7 @@ RUN apt-get -yqq update && \
     libxcb-shape0-dev \
     libxml2-dev \
     libxrandr-dev \
+    libzstd-dev \
     make \
     nasm \
     ocl-icd-opencl-dev \
@@ -395,6 +400,39 @@ RUN mkdir -p /tmp/ihd/build && \
     make && \
     make install && \
     strip -d /usr/local/lib/x86_64-linux-gnu/dri/iHD_drv_video.so
+
+# mesa gallium va drivers
+# must be built against the libva above: the va frontend gates
+# VASurfaceAttribAlignmentSize behind a compile-time VA_CHECK_VERSION(1, 21, 0),
+# so distro mesa built against an older libva reports no encode alignment
+RUN mkdir -p /tmp/mesa && \
+    curl -Lf \
+    https://archive.mesa3d.org/mesa-${MESA}.tar.xz | \
+    tar -Jx --strip-components=1 -C /tmp/mesa
+RUN cd /tmp/mesa && \
+    meson setup build \
+    --prefix=/usr/local \
+    --libdir=lib/x86_64-linux-gnu \
+    --buildtype=release \
+    -Dgallium-drivers=radeonsi,r600,nouveau,virgl \
+    -Dvulkan-drivers= \
+    -Dplatforms= \
+    -Dgallium-va=enabled \
+    -Dva-libs-path=/usr/local/lib/x86_64-linux-gnu/dri \
+    -Dvideo-codecs=all \
+    -Dllvm=disabled \
+    -Damd-use-llvm=false \
+    -Dopengl=false \
+    -Dgles1=disabled \
+    -Dgles2=disabled \
+    -Dglx=disabled \
+    -Degl=disabled \
+    -Dgbm=disabled \
+    -Dshared-glapi=disabled \
+    -Dgallium-rusticl=false \
+    -Dbuild-tests=false && \
+    ninja -C build install && \
+    strip -d /usr/local/lib/x86_64-linux-gnu/dri/libgallium_drv_video.so
 
 # shaderc
 RUN mkdir -p /tmp/shaderc && \
@@ -792,7 +830,11 @@ RUN apt-get -yqq update && \
     apt-get autoremove -y && \
     apt-get clean -y && \
     rm /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so && \
-    ln -s /usr/local/lib/x86_64-linux-gnu/dri/iHD_drv_video.so /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so
+    ln -s /usr/local/lib/x86_64-linux-gnu/dri/iHD_drv_video.so /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so && \
+    for d in radeonsi r600 nouveau virtio_gpu; do \
+    rm -f /usr/lib/x86_64-linux-gnu/dri/${d}_drv_video.so && \
+    ln -s /usr/local/lib/x86_64-linux-gnu/dri/${d}_drv_video.so /usr/lib/x86_64-linux-gnu/dri/${d}_drv_video.so; \
+    done
 
 CMD         ["--help"]
 ENTRYPOINT  ["ffmpeg"]
