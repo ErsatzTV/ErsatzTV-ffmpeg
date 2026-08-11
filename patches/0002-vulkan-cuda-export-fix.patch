@@ -1,0 +1,47 @@
+diff --git a/libavutil/hwcontext_vulkan.c b/libavutil/hwcontext_vulkan.c
+index 65e2256e2d..e80ab45639 100644
+--- a/libavutil/hwcontext_vulkan.c
++++ b/libavutil/hwcontext_vulkan.c
+@@ -2850,24 +2850,36 @@ static void try_export_flags(AVHWFramesContext *hwfc,
+     VkPhysicalDeviceImageFormatInfo2 pinfo = {
+         .sType  = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+         .pNext  = !exp ? NULL : &enext,
+-        .format = vk_find_format_entry(hwfc->sw_format)->vkf,
+         .type   = VK_IMAGE_TYPE_2D,
+         .tiling = hwctx->tiling,
+         .usage  = hwctx->usage,
+-        .flags  = VK_IMAGE_CREATE_ALIAS_BIT,
++        .flags  = hwctx->img_flags,
+     };
+ 
+     nb_mods = has_mods ? drm_mod_info->drmFormatModifierCount : 1;
+     for (int i = 0; i < nb_mods; i++) {
++        VkExternalMemoryHandleTypeFlags comp = 0x0;
++        int j;
++
+         if (has_mods)
+             phy_dev_mod_info.drmFormatModifier = drm_mod_info->pDrmFormatModifiers[i];
+ 
+-        ret = vk->GetPhysicalDeviceImageFormatProperties2(dev_hwctx->phys_dev,
+-                                                        &pinfo, &props);
++        /* Every image backing a frame has to be exportable, otherwise the frame
++         * as a whole cannot be exported, so all formats in use must be queried. */
++        for (j = 0; hwctx->format[j] != VK_FORMAT_UNDEFINED; j++) {
++            pinfo.format = hwctx->format[j];
++
++            ret = vk->GetPhysicalDeviceImageFormatProperties2(dev_hwctx->phys_dev,
++                                                             &pinfo, &props);
++            if (ret != VK_SUCCESS)
++                break;
++
++            comp |= eprops.externalMemoryProperties.compatibleHandleTypes;
++        }
+ 
+-        if (ret == VK_SUCCESS) {
++        if (hwctx->format[j] == VK_FORMAT_UNDEFINED) {
+             *iexp |= exp;
+-            *comp_handle_types |= eprops.externalMemoryProperties.compatibleHandleTypes;
++            *comp_handle_types |= comp;
+         }
+     }
+ }
