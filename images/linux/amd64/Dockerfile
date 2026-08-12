@@ -275,6 +275,9 @@ RUN mkdir /tmp/libdav1d/build && cd /tmp/libdav1d/build && \
     ninja install
 
 # libgl
+# prefix=/usr so the EGL vendor dir is /usr/share/glvnd/egl_vendor.d, where the
+# nvidia container runtime and mesa put their vendor json; a /usr/local prefix
+# hides them, which breaks the nvidia vulkan icd (it enumerates devices via EGL)
 RUN mkdir -p /tmp/libgl && \
     curl -Lf \
     https://gitlab.freedesktop.org/glvnd/libglvnd/-/archive/v${LIBGL}/libglvnd-v${LIBGL}.tar.gz | \
@@ -282,7 +285,8 @@ RUN mkdir -p /tmp/libgl && \
 RUN cd /tmp/libgl && \
     meson setup \
     --buildtype=release \
-    --libdir=lib/x86_64-linux-gnu \
+    --prefix=/usr \
+    --libdir=/usr/local/lib/x86_64-linux-gnu \
     build && \
     ninja -C build install && \
     strip -d \
@@ -317,18 +321,6 @@ RUN mkdir -p /tmp/libdovi && \
 RUN cd /tmp/libdovi/dolby_vision && \
     cargo cinstall --release --libdir=/usr/local/lib/x86_64-linux-gnu && \
     strip -d /usr/local/lib/x86_64-linux-gnu/libdovi.so
-
-# libplacebo
-RUN mkdir -p /tmp/libplacebo && \
-    git clone \
-    --branch v${LIBPLACEBO} \
-    --recursive https://code.videolan.org/videolan/libplacebo \
-    /tmp/libplacebo
-RUN cd /tmp/libplacebo && \
-    meson setup \
-    --prefix=/usr --libdir=/usr/local/lib/x86_64-linux-gnu \
-    . build --buildtype release && \
-    ninja -C build install
 
 # libsrt
 RUN mkdir -p /tmp/libsrt && \
@@ -598,6 +590,23 @@ RUN cd /tmp/vulkan-loader && \
     .. && \
     make && \
     make install
+
+# libplacebo
+# must build after shaderc and vulkan; meson defaults both to 'auto', so building
+# earlier silently produces a libplacebo with no spir-v compiler, which fails at
+# runtime with "Failed initializing any SPIR-V compiler"
+RUN mkdir -p /tmp/libplacebo && \
+    git clone \
+    --branch v${LIBPLACEBO} \
+    --recursive https://code.videolan.org/videolan/libplacebo \
+    /tmp/libplacebo
+RUN cd /tmp/libplacebo && \
+    meson setup \
+    --prefix=/usr --libdir=/usr/local/lib/x86_64-linux-gnu \
+    -Dvulkan=enabled \
+    -Dshaderc=enabled \
+    . build --buildtype release && \
+    ninja -C build install
 
 # x264
 RUN mkdir -p /tmp/x264 && \
