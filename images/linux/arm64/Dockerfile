@@ -34,6 +34,7 @@ RUN apt-get -yqq update && \
     apt-get -yq --no-install-recommends install -y \
     autoconf \
     automake \
+    autopoint \
     bzip2 \
     ca-certificates \
     cmake \
@@ -42,6 +43,7 @@ RUN apt-get -yqq update && \
     expat \
     g++ \
     gcc \
+    gettext \
     git \
     gperf \
     libexpat1-dev \
@@ -132,10 +134,11 @@ RUN cd /tmp/freetype && \
 # fontconfig
 RUN mkdir -p /tmp/fontconfig && \
     curl -Lf \
-    https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG}.tar.xz | \
-    tar -Jx --strip-components=1 -C /tmp/fontconfig
+    https://github.com/fontconfig/fontconfig/archive/refs/tags/${FONTCONFIG}.tar.gz | \
+    tar -zx --strip-components=1 -C /tmp/fontconfig
 RUN cd /tmp/fontconfig && \
-    ./configure \
+    ./autogen.sh \
+    --disable-cache-build \
     --disable-static \
     --enable-shared && \
     make && \
