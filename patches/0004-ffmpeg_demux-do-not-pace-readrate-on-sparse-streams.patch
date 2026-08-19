@@ -1,0 +1,47 @@
+--- a/fftools/ffmpeg_demux.c
++++ b/fftools/ffmpeg_demux.c
+@@ -515,8 +515,8 @@
+     int64_t initial_burst = AV_TIME_BASE * d->readrate_initial_burst;
+     int resume_warn = 0;
+ 
+-    DemuxStream *slowest = NULL;
+-    int64_t progress = INT64_MAX;
++    DemuxStream *slowest = NULL, *slowest_sparse = NULL;
++    int64_t progress = INT64_MAX, progress_sparse = INT64_MAX;
+ 
+     for (int i = 0; i < f->nb_streams; i++) {
+         InputStream *ist = f->streams[i];
+@@ -528,12 +528,30 @@
+         stream_ts_offset = FFMAX(ds->first_dts, file_start);
+         pts = av_rescale(ds->dts, 1000000, AV_TIME_BASE);
+         pts_diff = pts - stream_ts_offset;
+-        if (pts_diff < progress) {
+-            progress = pts_diff;
+-            slowest = ds;
++
++        /* ds->dts only moves when a packet of that stream is demuxed, so for a
++         * sparsely populated track it is a staircase: frozen between packets,
++         * then advancing by the whole gap at once. Pacing on such a stream
++         * sleeps for the length of the gap in a single av_usleep() and stalls
++         * every other stream with it. Only continuously timed streams may set
++         * the pace; the rest are a fallback for inputs that have nothing else. */
++        if (ist->par->codec_type == AVMEDIA_TYPE_VIDEO ||
++            ist->par->codec_type == AVMEDIA_TYPE_AUDIO) {
++            if (pts_diff < progress) {
++                progress = pts_diff;
++                slowest = ds;
++            }
++        } else if (pts_diff < progress_sparse) {
++            progress_sparse = pts_diff;
++            slowest_sparse = ds;
+         }
+     }
+ 
++    if (!slowest) {
++        slowest  = slowest_sparse;
++        progress = progress_sparse;
++    }
++
+     if (!slowest || progress <= initial_burst)
+         return;
+ 
