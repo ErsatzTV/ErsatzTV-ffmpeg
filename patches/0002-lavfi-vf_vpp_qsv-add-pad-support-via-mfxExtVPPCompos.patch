@@ -1,0 +1,248 @@
+From 268e9af2a8784b6ed644a8031fd80323f9bc671a Mon Sep 17 00:00:00 2001
+From: McKenzie Pepper <mapepp2@protonmail.com>
+Date: Wed, 29 Jul 2026 19:46:14 -0400
+Subject: [PATCH 1/2] lavfi/vf_vpp_qsv: add pad support via mfxExtVPPComposite
+
+ffmpeg has pad_vaapi but no QSV equivalent, and vpp_qsv exposes input crop
+and scale but no way to pad. Any QSV pipeline needing aspect correction to a
+fixed canvas must therefore round-trip every frame through system memory:
+
+  vpp_qsv=w=1440:h=1080,hwdownload,format=nv12,pad=1920:1080:240:0,hwupload
+
+mfxExtVPPComposite already provides the needed capability:
+mfxVPPCompInputStream carries DstX/DstY/DstW/DstH ("location of input
+stream in output surface") and the ext buffer carries the background
+colour. Driving it with NumInputStream=1 places the scaled input inside a
+larger output surface and fills the remainder, which is a pad. Since
+DstW/DstH also scale, this performs scale and pad in a single VPP pass.
+
+Implementation notes:
+
+- The background colour fields Y/R, U/G and V/B are unions, so exactly one
+  triple can be set, chosen by the output colour format and scaled to its
+  bit depth (P010 output verified to take 10-bit-range values).
+- Padding forces a VPP session even when the padded size equals the input
+  size: the passthrough shortcut would otherwise silently drop the
+  scale+pad (e.g. 720x480 -> 720x404 letterboxed back into a 720x480
+  canvas).
+- transpose/rotate/hflip are rejected in combination with padding:
+  rotation swaps the output geometry after the composite layout is fixed,
+  and mirroring inside a composite is unvalidated.
+- This patch depends on the qsvvpp timestamp fix in this series:
+  composition does not generate output surface timestamps, and without
+  that fix the frame rate converter drops nearly every frame as
+  non-advancing.
+
+Measured on an Intel Arc Pro B50 (Battlemage G21, SR-IOV VF, xe driver),
+640x480 4:3 source scaled to 1440x1080 and padded to 1920x1080, h264 out,
+60s, all arms delivering every frame to the muxer (counted with ffprobe
+-count_packets, not -f null), CPU time from -benchmark:
+
+  vpp_qsv only, no pad (ceiling)              565 fps, 1.1s CPU
+  scale_vaapi + pad_vaapi (GPU pad)           563 fps, 1.3s CPU
+  vpp_qsv pad, this patch                     563 fps, 1.3s CPU
+  vpp_qsv + hwdownload/pad/hwupload           212 fps, 5.2s CPU
+
+2.7x the throughput and a quarter of the CPU of the system-memory chain,
+and parity with pad_vaapi; padding costs essentially nothing over plain
+scaling.
+
+Correctness validated on the same hardware: pad strip is true black
+(Y/U/V = 16/128/128) and the pts sequence matches the no-pad control
+exactly; the same-size-canvas case produces the letterbox; NV12 -> P010
+10-bit HEVC output has a neutral pad strip (64/512/512); pad_color=red
+lands on U/V = 90/240; deinterlace=2 combined with pad delivers 300/300
+frames with a correct strip. Untested: RGB output, odd DstX/DstY on
+subsampled formats, and interaction with scale_mode (mfxExtVPPScaling) or
+frame rate conversion in the same pass.
+
+New options: pad_w, pad_h (0 = disabled), pad_x, pad_y (-1 = centre),
+pad_color (default black).
+---
+ libavfilter/vf_vpp_qsv.c | 109 +++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 106 insertions(+), 3 deletions(-)
+
+diff --git a/libavfilter/vf_vpp_qsv.c b/libavfilter/vf_vpp_qsv.c
+index 4de99d6..c9f98e2 100644
+--- a/libavfilter/vf_vpp_qsv.c
++++ b/libavfilter/vf_vpp_qsv.c
+@@ -25,6 +25,7 @@
+ 
+ #include "config_components.h"
+ 
++#include "libavutil/colorspace.h"
+ #include "libavutil/opt.h"
+ #include "libavutil/eval.h"
+ #include "libavutil/hwcontext.h"
+@@ -44,7 +45,7 @@
+ #define FLAGS (AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_FILTERING_PARAM)
+ 
+ /* number of video enhancement filters */
+-#define ENH_FILTERS_COUNT (8)
++#define ENH_FILTERS_COUNT (9)
+ 
+ typedef struct VPPContext{
+     QSVVPPContext qsv;
+@@ -58,6 +59,10 @@ typedef struct VPPContext{
+     mfxExtVPPRotation rotation_conf;
+     mfxExtVPPMirroring mirroring_conf;
+     mfxExtVPPScaling scale_conf;
++    /* pad: a single-stream composite places the scaled input inside a larger
++     * output surface and fills the remainder with a background colour. */
++    mfxExtVPPComposite composite_conf;
++    mfxVPPCompInputStream comp_stream;
+ #if QSV_ONEVPL
+     /** Video signal info attached on the input frame */
+     mfxExtVideoSignalInfo invsi_conf;
+@@ -92,6 +97,17 @@ typedef struct VPPContext{
+     int crop_x;
+     int crop_y;
+ 
++    /**
++     * Pad: final canvas size, 0 = no padding (feature disabled). The scaled
++     * image (out_width x out_height) is placed at (pad_x, pad_y) inside a
++     * pad_w x pad_h output surface; the rest is filled with pad_rgba.
++     */
++    int pad_w;
++    int pad_h;
++    int pad_x;                  /* < 0 = centre horizontally */
++    int pad_y;                  /* < 0 = centre vertically */
++    uint8_t pad_rgba[4];
++
+     int transpose;
+     int rotate;                 /* rotate angle : [0, 90, 180, 270] */
+     int hflip;                  /* flip mode : 0 = off, 1 = HORIZONTAL flip */
+@@ -535,9 +551,46 @@ static int config_output(AVFilterLink *outlink)
+     FilterLink         *inl = ff_filter_link(inlink);
+     FilterLink          *ol = ff_filter_link(outlink);
+     enum AVPixelFormat in_format;
++    int pad_w, pad_h, pad_x, pad_y, use_pad;
+ 
+     outlink->w          = vpp->out_width;
+     outlink->h          = vpp->out_height;
++
++    /* Padding enlarges the output link beyond the scaled size, so resolve the
++     * geometry before anything downstream reads outlink->w/h. */
++    pad_w = vpp->pad_w ? vpp->pad_w : vpp->out_width;
++    pad_h = vpp->pad_h ? vpp->pad_h : vpp->out_height;
++
++    if (pad_w < vpp->out_width || pad_h < vpp->out_height) {
++        av_log(ctx, AV_LOG_ERROR,
++               "Pad size %dx%d cannot be smaller than the scaled size %dx%d.\n",
++               pad_w, pad_h, vpp->out_width, vpp->out_height);
++        return AVERROR(EINVAL);
++    }
++
++    pad_x = vpp->pad_x < 0 ? (pad_w - vpp->out_width)  / 2 : vpp->pad_x;
++    pad_y = vpp->pad_y < 0 ? (pad_h - vpp->out_height) / 2 : vpp->pad_y;
++
++    if (pad_x + vpp->out_width > pad_w || pad_y + vpp->out_height > pad_h) {
++        av_log(ctx, AV_LOG_ERROR,
++               "Pad offset (%d,%d) places the %dx%d image outside the %dx%d "
++               "canvas.\n", pad_x, pad_y, vpp->out_width, vpp->out_height,
++               pad_w, pad_h);
++        return AVERROR(EINVAL);
++    }
++
++    use_pad = pad_w != vpp->out_width || pad_h != vpp->out_height;
++
++    /* Rotation swaps the output geometry after the composite layout is fixed,
++     * and mirroring inside a composite is unvalidated. */
++    if (use_pad && (vpp->transpose >= 0 || vpp->rotate || vpp->hflip)) {
++        av_log(ctx, AV_LOG_ERROR,
++               "Padding cannot be combined with transpose, rotate or hflip.\n");
++        return AVERROR(EINVAL);
++    }
++
++    outlink->w          = pad_w;
++    outlink->h          = pad_h;
+     ol->frame_rate      = vpp->framerate;
+     if (vpp->framerate.num == 0 || vpp->framerate.den == 0)
+         outlink->time_base = inlink->time_base;
+@@ -577,6 +630,49 @@ static int config_output(AVFilterLink *outlink)
+         param.crop     = &crop;
+     }
+ 
++    /* Pad via a single-stream composite. DstW/DstH perform the scale, so this
++     * replaces the ordinary scaling pass rather than adding one. */
++    if (use_pad) {
++        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(vpp->out_format);
++        const int shift = desc ? FFMAX(desc->comp[0].depth - 8, 0) : 0;
++        const uint8_t r = vpp->pad_rgba[0];
++        const uint8_t g = vpp->pad_rgba[1];
++        const uint8_t b = vpp->pad_rgba[2];
++
++        vpp->comp_stream.DstX = pad_x;
++        vpp->comp_stream.DstY = pad_y;
++        vpp->comp_stream.DstW = vpp->out_width;
++        vpp->comp_stream.DstH = vpp->out_height;
++        vpp->comp_stream.LumaKeyEnable     = 0;
++        vpp->comp_stream.GlobalAlphaEnable = 0;
++        vpp->comp_stream.PixelAlphaEnable  = 0;
++
++        vpp->composite_conf.Header.BufferId = MFX_EXTBUFF_VPP_COMPOSITE;
++        vpp->composite_conf.Header.BufferSz = sizeof(vpp->composite_conf);
++        vpp->composite_conf.NumInputStream  = 1;
++        vpp->composite_conf.InputStream     = &vpp->comp_stream;
++
++        /* Y/R, U/G and V/B are unions in mfxExtVPPComposite: only one triple
++         * can be set, chosen by the output colour format, and scaled to its
++         * bit depth. */
++        if (desc && (desc->flags & AV_PIX_FMT_FLAG_RGB)) {
++            vpp->composite_conf.R = r << shift;
++            vpp->composite_conf.G = g << shift;
++            vpp->composite_conf.B = b << shift;
++        } else {
++            vpp->composite_conf.Y = RGB_TO_Y_CCIR(r, g, b) << shift;
++            vpp->composite_conf.U = RGB_TO_U_CCIR(r, g, b, 0) << shift;
++            vpp->composite_conf.V = RGB_TO_V_CCIR(r, g, b, 0) << shift;
++        }
++
++        param.ext_buf[param.num_ext_buf++] =
++            (mfxExtBuffer *)&vpp->composite_conf;
++
++        av_log(ctx, AV_LOG_VERBOSE,
++               "Pad: %dx%d image at (%d,%d) in %dx%d canvas via composite.\n",
++               vpp->out_width, vpp->out_height, pad_x, pad_y, pad_w, pad_h);
++    }
++
+ #define INIT_MFX_EXTBUF(extbuf, id) do { \
+         memset(&vpp->extbuf, 0, sizeof(vpp->extbuf)); \
+         vpp->extbuf.Header.BufferId = id; \
+@@ -687,7 +783,8 @@ static int config_output(AVFilterLink *outlink)
+         }
+     }
+ 
+-    if (inlink->w != outlink->w || inlink->h != outlink->h || in_format != vpp->out_format) {
++    if (inlink->w != outlink->w || inlink->h != outlink->h || in_format != vpp->out_format ||
++        (use_pad && (inlink->w != vpp->out_width || inlink->h != vpp->out_height))) {
+         if (QSV_RUNTIME_VERSION_ATLEAST(mfx_version, 1, 19)) {
+             int mode = vpp->scale_mode;
+ 
+@@ -707,7 +804,7 @@ static int config_output(AVFilterLink *outlink)
+ #undef SET_MFX_PARAM_FIELD
+ 
+     if (vpp->use_frc || vpp->use_crop || vpp->deinterlace || vpp->denoise ||
+-        vpp->detail || vpp->procamp || vpp->rotate || vpp->hflip ||
++        vpp->detail || vpp->procamp || vpp->rotate || vpp->hflip || use_pad ||
+         inlink->w != outlink->w || inlink->h != outlink->h || in_format != vpp->out_format ||
+         vpp->color_range != AVCOL_RANGE_UNSPECIFIED ||
+         vpp->color_primaries != AVCOL_PRI_UNSPECIFIED ||
+@@ -878,6 +975,12 @@ static const AVOption vpp_options[] = {
+     { "cx",   "set the x crop area expression",       OFFSET(cx), AV_OPT_TYPE_STRING, { .str = "(in_w-out_w)/2" }, 0, 0, FLAGS },
+     { "cy",   "set the y crop area expression",       OFFSET(cy), AV_OPT_TYPE_STRING, { .str = "(in_h-out_h)/2" }, 0, 0, FLAGS },
+ 
++    { "pad_w",     "set the padded output width (0 = no padding)",                    OFFSET(pad_w),    AV_OPT_TYPE_INT,   { .i64 = 0 },  0, INT16_MAX, FLAGS },
++    { "pad_h",     "set the padded output height (0 = no padding)",                   OFFSET(pad_h),    AV_OPT_TYPE_INT,   { .i64 = 0 },  0, INT16_MAX, FLAGS },
++    { "pad_x",     "set the x offset of the image in the padded output (-1=centre)",  OFFSET(pad_x),    AV_OPT_TYPE_INT,   { .i64 = -1 }, -1, INT16_MAX, FLAGS },
++    { "pad_y",     "set the y offset of the image in the padded output (-1=centre)",  OFFSET(pad_y),    AV_OPT_TYPE_INT,   { .i64 = -1 }, -1, INT16_MAX, FLAGS },
++    { "pad_color", "set the colour of the padded area",                               OFFSET(pad_rgba), AV_OPT_TYPE_COLOR, { .str = "black" }, 0, 0, FLAGS },
++
+     { "w",      "Output video width(0=input video width, -1=keep input video aspect)",  OFFSET(ow), AV_OPT_TYPE_STRING, { .str="cw" }, 0, 255, .flags = FLAGS },
+     { "width",  "Output video width(0=input video width, -1=keep input video aspect)",  OFFSET(ow), AV_OPT_TYPE_STRING, { .str="cw" }, 0, 255, .flags = FLAGS },
+     { "h",      "Output video height(0=input video height, -1=keep input video aspect)", OFFSET(oh), AV_OPT_TYPE_STRING, { .str="w*ch/cw" }, 0, 255, .flags = FLAGS },
+
+base-commit: cd1f545cf27ba08f6f5b31b1e92665d7874d4fd7
+-- 
+2.55.0
+
