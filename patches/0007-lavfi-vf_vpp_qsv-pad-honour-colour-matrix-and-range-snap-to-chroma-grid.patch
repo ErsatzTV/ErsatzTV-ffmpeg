@@ -1,0 +1,239 @@
+From: Jason Dove <1695733+jasongdove@users.noreply.github.com>
+Subject: [PATCH] lavfi/vf_vpp_qsv: pad: honour colour matrix and range, snap
+ to chroma grid
+
+Follow-up to the pad_w/pad_h/pad_x/pad_y/pad_color support:
+
+- The background colour was converted with fixed BT.601 limited-range
+  constants. Convert it with the matrix and range the output carries
+  instead (out_color_matrix/out_range when set, else the input link's,
+  else BT.709 limited), at the output bit depth. Black is unchanged
+  (16/128/128, 64/512/512); other colours now match the software pad
+  filter on the same link, e.g. red on a bt709/tv link is 63/102/240
+  rather than 81/90/240.
+
+- Odd pad offsets on subsampled formats handed the driver an odd
+  DstX/DstY. Snap the canvas up and the offset down to the chroma grid of
+  the output format, logging the adjustment at verbose level.
+
+- Resolve the output format before the pad geometry so the snapping can
+  use it; no behaviour change otherwise.
+
+- Composition is documented to skip every VPP filter except deinterlacing
+  and scaling, and the runtime does not report it. Measured on libmfx-gen:
+  procamp next to padding is a silent no-op (iHD 25.2.3 on Alder Lake-N,
+  26.2.4 on Arc A750), and HDR10 tonemapping next to padding is dropped on
+  Linux (iHD 26.2.2, Arc A310) while honoured on Windows D3D11, so the
+  outcome depends on the runtime. Reject denoise, detail, procamp,
+  tonemapping and colour conversion together with padding. Frame rate
+  conversion measured as honoured (25 -> 50 fps) everywhere and stays
+  allowed.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ libavfilter/vf_vpp_qsv.c | 138 ++++++++++++++++++++++++++++++---------
+ 1 file changed, 107 insertions(+), 31 deletions(-)
+
+diff --git a/libavfilter/vf_vpp_qsv.c b/libavfilter/vf_vpp_qsv.c
+index c9f98e2d5e..467cc11923 100644
+--- a/libavfilter/vf_vpp_qsv.c
++++ b/libavfilter/vf_vpp_qsv.c
+@@ -25,7 +25,7 @@
+ 
+ #include "config_components.h"
+ 
+-#include "libavutil/colorspace.h"
++#include "libavutil/csp.h"
+ #include "libavutil/opt.h"
+ #include "libavutil/eval.h"
+ #include "libavutil/hwcontext.h"
+@@ -538,6 +538,57 @@ static int vpp_set_frame_ext_params(AVFilterContext *ctx, const AVFrame *in, AVF
+     return 0;
+ }
+ 
++/* The composition background is a Y/U/V (or R/G/B) triple at the output bit
++ * depth; the unions in mfxExtVPPComposite allow exactly one. Convert with the
++ * matrix and range the output will carry (the out_color_matrix/out_range
++ * options, else the input link's, else BT.709 limited) so "black" lands on the
++ * video black level rather than super-black, and so non-black colours match
++ * the software pad filter on the same link. */
++static void pad_background_color(VPPContext *vpp, AVFilterLink *inlink)
++{
++    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(vpp->out_format);
++    const int depth = desc ? desc->comp[0].depth : 8;
++    const int max   = (1 << depth) - 1;
++    const double r  = vpp->pad_rgba[0] / 255.0;
++    const double g  = vpp->pad_rgba[1] / 255.0;
++    const double b  = vpp->pad_rgba[2] / 255.0;
++    enum AVColorSpace csp = vpp->color_matrix != AVCOL_SPC_UNSPECIFIED ?
++                            vpp->color_matrix : inlink->colorspace;
++    enum AVColorRange range = vpp->color_range != AVCOL_RANGE_UNSPECIFIED ?
++                              vpp->color_range : inlink->color_range;
++    const AVLumaCoefficients *lc;
++    double kr, kb, kg, y, u, v;
++
++    if (desc && (desc->flags & AV_PIX_FMT_FLAG_RGB)) {
++        vpp->composite_conf.R = lrint(r * max);
++        vpp->composite_conf.G = lrint(g * max);
++        vpp->composite_conf.B = lrint(b * max);
++        return;
++    }
++
++    lc = av_csp_luma_coeffs_from_avcsp(csp);
++    if (!lc)
++        lc = av_csp_luma_coeffs_from_avcsp(AVCOL_SPC_BT709);
++    kr = av_q2d(lc->cr);
++    kb = av_q2d(lc->cb);
++    kg = 1.0 - kr - kb;
++
++    y = kr * r + kg * g + kb * b;
++    u = (b - y) / (2.0 * (1.0 - kb));
++    v = (r - y) / (2.0 * (1.0 - kr));
++
++    if (range == AVCOL_RANGE_JPEG) {
++        vpp->composite_conf.Y = av_clip(lrint(y * max), 0, max);
++        vpp->composite_conf.U = av_clip(lrint(u * max) + (1 << (depth - 1)), 0, max);
++        vpp->composite_conf.V = av_clip(lrint(v * max) + (1 << (depth - 1)), 0, max);
++    } else {
++        const int scale = 1 << (depth - 8);
++        vpp->composite_conf.Y = av_clip(lrint((16.0 + 219.0 * y) * scale), 0, max);
++        vpp->composite_conf.U = av_clip(lrint((128.0 + 224.0 * u) * scale), 0, max);
++        vpp->composite_conf.V = av_clip(lrint((128.0 + 224.0 * v) * scale), 0, max);
++    }
++}
++
+ static int config_output(AVFilterLink *outlink)
+ {
+     FilterLink     *outl = ff_filter_link(outlink);
+@@ -553,6 +604,17 @@ static int config_output(AVFilterLink *outlink)
+     enum AVPixelFormat in_format;
+     int pad_w, pad_h, pad_x, pad_y, use_pad;
+ 
++    if (inlink->format == AV_PIX_FMT_QSV) {
++         if (!inl->hw_frames_ctx || !inl->hw_frames_ctx->data)
++             return AVERROR(EINVAL);
++         else
++             in_format = ((AVHWFramesContext*)inl->hw_frames_ctx->data)->sw_format;
++    } else
++        in_format = inlink->format;
++
++    if (vpp->out_format == AV_PIX_FMT_NONE)
++        vpp->out_format = in_format;
++
+     outlink->w          = vpp->out_width;
+     outlink->h          = vpp->out_height;
+ 
+@@ -571,6 +633,25 @@ static int config_output(AVFilterLink *outlink)
+     pad_x = vpp->pad_x < 0 ? (pad_w - vpp->out_width)  / 2 : vpp->pad_x;
+     pad_y = vpp->pad_y < 0 ? (pad_h - vpp->out_height) / 2 : vpp->pad_y;
+ 
++    /* Subsampled output formats need the picture on the chroma grid. Grow the
++     * canvas and move the picture towards the origin rather than hand the
++     * driver an odd DstX/DstY. */
++    {
++        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(vpp->out_format);
++        const int wmask = desc ? (1 << desc->log2_chroma_w) - 1 : 0;
++        const int hmask = desc ? (1 << desc->log2_chroma_h) - 1 : 0;
++        const int w = (pad_w + wmask) & ~wmask;
++        const int h = (pad_h + hmask) & ~hmask;
++        const int x = pad_x & ~wmask;
++        const int y = pad_y & ~hmask;
++
++        if (w != pad_w || h != pad_h || x != pad_x || y != pad_y)
++            av_log(ctx, AV_LOG_VERBOSE,
++                   "Aligning pad geometry to the chroma grid: %dx%d+%d+%d -> %dx%d+%d+%d\n",
++                   pad_w, pad_h, pad_x, pad_y, w, h, x, y);
++        pad_w = w; pad_h = h; pad_x = x; pad_y = y;
++    }
++
+     if (pad_x + vpp->out_width > pad_w || pad_y + vpp->out_height > pad_h) {
+         av_log(ctx, AV_LOG_ERROR,
+                "Pad offset (%d,%d) places the %dx%d image outside the %dx%d "
+@@ -589,6 +670,26 @@ static int config_output(AVFilterLink *outlink)
+         return AVERROR(EINVAL);
+     }
+ 
++    /* Composition is documented to skip every VPP filter other than
++     * deinterlacing and scaling, and the runtime does not report it. Measured
++     * on libmfx-gen: procamp is a silent no-op next to padding (iHD 25.2/26.2),
++     * and HDR10 tonemapping is dropped on Linux (iHD 26.2.2) while honoured on
++     * Windows D3D11, so the outcome depends on the runtime. Refuse those
++     * combinations rather than emit unprocessed output; colour conversion
++     * rides the same per-frame signal-info path as tonemapping. Frame rate
++     * conversion measured as honoured everywhere and stays allowed. */
++    if (use_pad && (vpp->denoise || vpp->detail || vpp->procamp || vpp->tonemap ||
++                    vpp->color_range != AVCOL_RANGE_UNSPECIFIED ||
++                    vpp->color_primaries != AVCOL_PRI_UNSPECIFIED ||
++                    vpp->color_transfer != AVCOL_TRC_UNSPECIFIED ||
++                    vpp->color_matrix != AVCOL_SPC_UNSPECIFIED)) {
++        av_log(ctx, AV_LOG_ERROR,
++               "Padding runs the VPP in composition mode, which ignores denoise, "
++               "detail, procamp, tonemapping and colour conversion. Apply them "
++               "in a separate vpp_qsv instance.\n");
++        return AVERROR(EINVAL);
++    }
++
+     outlink->w          = pad_w;
+     outlink->h          = pad_h;
+     ol->frame_rate      = vpp->framerate;
+@@ -607,16 +708,6 @@ static int config_output(AVFilterLink *outlink)
+         return AVERROR(EINVAL);
+     }
+ 
+-    if (inlink->format == AV_PIX_FMT_QSV) {
+-         if (!inl->hw_frames_ctx || !inl->hw_frames_ctx->data)
+-             return AVERROR(EINVAL);
+-         else
+-             in_format = ((AVHWFramesContext*)inl->hw_frames_ctx->data)->sw_format;
+-    } else
+-        in_format = inlink->format;
+-
+-    if (vpp->out_format == AV_PIX_FMT_NONE)
+-        vpp->out_format = in_format;
+     param.out_sw_format  = vpp->out_format;
+ 
+     if (vpp->use_crop) {
+@@ -633,12 +724,6 @@ static int config_output(AVFilterLink *outlink)
+     /* Pad via a single-stream composite. DstW/DstH perform the scale, so this
+      * replaces the ordinary scaling pass rather than adding one. */
+     if (use_pad) {
+-        const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(vpp->out_format);
+-        const int shift = desc ? FFMAX(desc->comp[0].depth - 8, 0) : 0;
+-        const uint8_t r = vpp->pad_rgba[0];
+-        const uint8_t g = vpp->pad_rgba[1];
+-        const uint8_t b = vpp->pad_rgba[2];
+-
+         vpp->comp_stream.DstX = pad_x;
+         vpp->comp_stream.DstY = pad_y;
+         vpp->comp_stream.DstW = vpp->out_width;
+@@ -652,25 +737,16 @@ static int config_output(AVFilterLink *outlink)
+         vpp->composite_conf.NumInputStream  = 1;
+         vpp->composite_conf.InputStream     = &vpp->comp_stream;
+ 
+-        /* Y/R, U/G and V/B are unions in mfxExtVPPComposite: only one triple
+-         * can be set, chosen by the output colour format, and scaled to its
+-         * bit depth. */
+-        if (desc && (desc->flags & AV_PIX_FMT_FLAG_RGB)) {
+-            vpp->composite_conf.R = r << shift;
+-            vpp->composite_conf.G = g << shift;
+-            vpp->composite_conf.B = b << shift;
+-        } else {
+-            vpp->composite_conf.Y = RGB_TO_Y_CCIR(r, g, b) << shift;
+-            vpp->composite_conf.U = RGB_TO_U_CCIR(r, g, b, 0) << shift;
+-            vpp->composite_conf.V = RGB_TO_V_CCIR(r, g, b, 0) << shift;
+-        }
++        pad_background_color(vpp, inlink);
+ 
+         param.ext_buf[param.num_ext_buf++] =
+             (mfxExtBuffer *)&vpp->composite_conf;
+ 
+         av_log(ctx, AV_LOG_VERBOSE,
+-               "Pad: %dx%d image at (%d,%d) in %dx%d canvas via composite.\n",
+-               vpp->out_width, vpp->out_height, pad_x, pad_y, pad_w, pad_h);
++               "Pad: %dx%d image at (%d,%d) in %dx%d canvas via composite, "
++               "background %u/%u/%u.\n",
++               vpp->out_width, vpp->out_height, pad_x, pad_y, pad_w, pad_h,
++               vpp->composite_conf.Y, vpp->composite_conf.U, vpp->composite_conf.V);
+     }
+ 
+ #define INIT_MFX_EXTBUF(extbuf, id) do { \

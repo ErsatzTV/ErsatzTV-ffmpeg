@@ -725,7 +725,7 @@ RUN cd /tmp/ffmpeg && \
     --enable-vdpau \
     --enable-version3 \
     --enable-vulkan \
-    --extra-version=t11674 \
+    --extra-version=etv-g14f231eb \
     --extra-libs=-ldl \
     --extra-libs=-lpthread && \
     make
