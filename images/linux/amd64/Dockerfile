@@ -180,9 +180,12 @@ RUN cd /tmp/ffnvcodec && \
 
 # freetype
 RUN mkdir -p /tmp/freetype && \
-    curl -Lf \
-    https://download.savannah.gnu.org/releases/freetype/freetype-${FREETYPE}.tar.gz | \
-    tar -zx --strip-components=1 -C /tmp/freetype
+    { curl -Lf -o /tmp/freetype.tar.gz \
+    https://downloads.sourceforge.net/project/freetype/freetype2/${FREETYPE}/freetype-${FREETYPE}.tar.gz || \
+    curl -Lf -o /tmp/freetype.tar.gz \
+    https://download.savannah.gnu.org/releases/freetype/freetype-${FREETYPE}.tar.gz ; } && \
+    tar -zxf /tmp/freetype.tar.gz --strip-components=1 -C /tmp/freetype && \
+    rm /tmp/freetype.tar.gz
 RUN cd /tmp/freetype && \
     ./configure \
     --disable-static \
