@@ -43,7 +43,7 @@ Image: `ghcr.io/ersatztv/ersatztv-ffmpeg`
 | `8.1.2` | At each promotion | Always the newest promoted revision of 8.1.2. |
 | `latest` | At each promotion | Always the newest promoted revision. |
 
-Use the digest pin if you must know which bytes you get. The release notes show the digest. ErsatzTV uses this type of pin.
+Use the digest pin if you must know which bytes you get. The Build section of the release notes shows the digest. ErsatzTV uses this type of pin.
 
 A floating tag can change when you rebuild your image. The new revision can change FFmpeg behavior. Read the release notes before you update.
 
@@ -128,85 +128,10 @@ Default SemVer tools do not sort these tags correctly. For Renovate, use regex v
 
 Make sure that your tool sorts `8.1.2-10` after `8.1.2-9`.
 
-## Build
+## Build and release
 
-You must have `docker`, `git`, `jq` and a POSIX shell.
-
-To build a docker image:
-
-```sh
-docker build \
-  $(sh scripts/release-vars.sh "$(git rev-parse HEAD)" |
-    grep -E '^(FFMPEG_VERSION|FFMPEG_SHA256|FFMPEG_EXTRA_VERSION)=' | sed 's/^/--build-arg /') \
-  -f images/linux/amd64/Dockerfile .
-```
-
-To build a native target (`linux64`, `linuxarm64` or `win64`):
-
-```sh
-git submodule update --init
-sh scripts/build-native.sh linux64 "$(git rev-parse HEAD)"
-```
-
-The archive goes into `native/FFmpeg-Builds/artifacts/`. The native build uses the dependency images in [`native/images.lock.json`](native/images.lock.json).
-
-Local builds show `etv.dev.<commit>` in `ffmpeg -version`. Only the release workflow makes `etv.<revision>` builds.
-
-## Maintainers
-
-### Make a release
-
-1. Increase `revision` in [`release.json`](release.json). For a new FFmpeg version, also change the version, tag, commit and tarball checksum, and set `revision` to 1. Make sure that all patches apply to the new version.
-2. Add `release-notes/<tag>.md`. Write the changes that users can see.
-3. Merge to `main`. Make sure that CI passes.
-4. Push the tag. The tag must agree with `release.json`. Do not tag a commit that has `[no ci]` in its message.
-
-   ```sh
-   git tag 8.1.2-N
-   git push origin 8.1.2-N
-   ```
-
-The [release workflow](.github/workflows/release.yml) builds and tests all targets. Then it publishes a prerelease. The prerelease is not `latest`.
-
-If the workflow fails, look at the publish job:
-
-- If the publish job did not start, you can move the tag. Disable the "release tags" ruleset, move the tag, then enable the ruleset again.
-- If the publish job started, do not move the tag. Use the next revision.
-
-### Promote a release
-
-Get the index digest from the release notes. Then do these steps:
-
-1. Log in to `ghcr.io` with a token that has `write:packages`.
-2. Move the floating tags:
-
-   ```sh
-   docker buildx imagetools create \
-     -t ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2 \
-     -t ghcr.io/ersatztv/ersatztv-ffmpeg:latest \
-     ghcr.io/ersatztv/ersatztv-ffmpeg@sha256:<index digest>
-   ```
-
-3. Make sure that both tags have the index digest:
-
-   ```sh
-   docker buildx imagetools inspect ghcr.io/ersatztv/ersatztv-ffmpeg:8.1.2
-   docker buildx imagetools inspect ghcr.io/ersatztv/ersatztv-ffmpeg:latest
-   ```
-
-4. Make the release the latest release:
-
-   ```sh
-   gh release edit 8.1.2-N --prerelease=false --latest
-   ```
-
-5. Make sure that GitHub shows the new release as latest:
-
-   ```sh
-   gh api repos/ErsatzTV/ErsatzTV-ffmpeg/releases/latest --jq .tag_name
-   ```
-
-Do not promote an older revision after a newer one.
+- [Build](docs/building.md) the docker images and the native builds.
+- [Release](docs/releasing.md) a new revision. These steps are for maintainers.
 
 ## License
 
