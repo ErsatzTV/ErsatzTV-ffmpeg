@@ -95,13 +95,15 @@ notes:
      take it, but the AMF component id says MPEG2 and nothing here verifies MPEG-1."
 last_verified:
   version: n8.1.2
-  date: 2026-09-16
+  date: 2026-09-27
   builds:
     without_patch: n8.1.2-20260907-etv-g14f231eb
     with_patch:    n8.1.2-20260916-etv-g6a8e4827   # decoder mapping only; the
                                                    # GetCaps guard is NOT in this
-                                                   # build, rebuild and re-run
-                                                   # unsupported-gpu to confirm
+                                                   # build
+    release:       n8.1.2-etv.1                    # release 8.1.2-1, carries the
+                                                   # guard; unsupported-gpu still
+                                                   # not run against it
   how: >-
     Reproducer on the RX 6600M (INIT_HW_DEVICE="-init_hw_device d3d11va=dx:1
     -init_hw_device amf=hw@dx"): decoder-listed, mpeg2-progressive and
@@ -123,6 +125,13 @@ last_verified:
     both MPEG-2 and VC-1 (rc 139), which is what prompted the GetCaps guard; the
     guard itself has not been built yet. Stock 8.1.2 (g14f231eb): decoder-listed
     fails, both mpeg2 cases fail on the missing decoder selection line, exit 1.
+    2026-09-27, Radeon Pro WX 3200 (Polaris, driver 31.0.21924.61), Windows 11,
+    INIT_HW_DEVICE="-init_hw_device d3d11va=dx:0 -init_hw_device amf=hw@dx":
+    release 8.1.2-1 win64 zip (SHA256SUMS verified) passes decoder-listed,
+    mpeg2-progressive and mpeg2-interlaced (60/60 frames each), exit 0; stock
+    BtbN n8.1.2-50-g1a748fe2cd-20260831 fails all three, exit 1. No VC-1 sample
+    and no MPEG-2-less AMD adapter on that host, so vc1 and unsupported-gpu
+    were skipped.
 remove_when: >-
   Upstream amfdec.c registers mpeg2_amf (and vc1_amf) itself, i.e. the
   decoder-listed case passes on a stock build of the pinned version.

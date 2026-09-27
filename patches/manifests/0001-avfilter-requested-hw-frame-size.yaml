@@ -13,12 +13,14 @@ upstream:
     - a0510f7f72  # avfilter/framepool: update frame dimensions on reinit
                   # (2026-03-24) - the actual fix: a reused pool now restamps
                   # the requested width/height onto the frame.
-  # The HARDWARE half is unfixed in master as of N-124254-g397c7c7524:
-  # ff_default_get_video_buffer2() still returns av_hwframe_get_buffer()'s frame
-  # untouched, at the frames context's padded surface size.
+  # The HARDWARE half is unfixed in master as of N-126905-gb87602a63a (measured,
+  # cuda-hw-frames fails): ff_default_get_video_buffer2() still returns
+  # av_hwframe_get_buffer()'s frame untouched, at the frames context's padded
+  # surface size.
 dependencies: []
 platforms:
   - linux-cuda                # green line + 1088-line output (overlay_cuda)
+  - windows-cuda              # same; cuda-hw-frames measured on Windows
   - linux-vaapi               # hwupload -22 / 1088-line output (sw overlay)
   - windows-d3d11va           # same class; not covered by the reproducer
   - windows-qsv               # same class; not covered by the reproducer
@@ -59,19 +61,23 @@ notes:
      ff_frame_pool_video_reinit(). The replacement only needs the hardware half -
      clamp the frame to w/h after av_hwframe_get_buffer()."
 last_verified:
-  version: n8.1.2, n9.0, master N-124254-g397c7c7524
-  date: 2026-08-19
+  version: n8.1.2, n9.0, master N-124254-g397c7c7524, master N-126905-gb87602a63a
+  date: 2026-09-27
   builds:
-    without_patch: n8.1.2-20260722                 # stock BtbN 8.1.2
-    with_patch:    n8.1.2-20260819-etv-g3c0520f9
+    without_patch: n8.1.2-50-g1a748fe2cd-20260831  # stock BtbN 8.1.2 (cuda half);
+                                                   # vaapi half: n8.1.2-20260722
+    with_patch:    n8.1.2-etv.1                    # release 8.1.2-1 (cuda half);
+                                                   # vaapi half: n8.1.2-20260819-etv-g3c0520f9
+    upstream:      N-126905-gb87602a63a-20260927   # BtbN master, unpatched
   how: >-
-    Reproducer on this host (Intel iHD 26.2.4, VAAPI only, no CUDA):
-    stock n8.1.2 fails both vaapi cases (1920x1088, and hwupload -22 / exit 234);
-    the etv build, master-20260429 and Arch n9.0 all pass both at 1920x1080.
-    cuda-hw-frames skipped everywhere for lack of a CUDA device.
-    The hardware half was verified by source instead: n9.0's and master's
-    ff_default_get_video_buffer2() still `return frame;` straight out of
-    av_hwframe_get_buffer() with no clamp to the requested size.
+    VAAPI half, 2026-08-19, Intel iHD 26.2.4, no CUDA: stock n8.1.2 fails both
+    vaapi cases (1920x1088, and hwupload -22 / exit 234); the etv build,
+    master-20260429 and Arch n9.0 all pass both at 1920x1080.
+    Hardware half, 2026-09-27, Quadro P620 (driver 582.78), Windows 11 26100,
+    release 8.1.2-1 win64 zip (SHA256SUMS verified): cuda-hw-frames passes at
+    1920x1080; stock n8.1.2 and master N-126905-gb87602a63a both fail at
+    1920x1088. The case no longer encodes (it used h264_nvenc, which master
+    cannot open on a pre-610 driver, so master was reported as a skip).
 remove_when: >-
   cuda-hw-frames passes on an unpatched build on a CUDA host. The vaapi cases
   passing only retires the software-pool half, which upstream already fixed in

@@ -25,7 +25,7 @@
 # different request), so none of these cases may use -ss.
 #
 # Each case is skipped, not failed, when the ffmpeg under test cannot run it
-# (no VAAPI device, no CUDA/nvenc, filters not built in).
+# (no VAAPI device, no CUDA device, filters not built in).
 #
 # Usage: avfilter-requested-hw-frame-size.sh [/path/to/ffmpeg]
 #        FFMPEG=/path/to/ffmpeg avfilter-requested-hw-frame-size.sh
@@ -139,12 +139,15 @@ run_vaapi_hwupload() {
 # The hw allocation path. overlay_cuda blends in place, so it is the one filter
 # in reach that calls ff_inlink_make_frame_writable() on a hardware link.
 # Requires a CUDA host; VAAPI has no in-place filter that exercises this.
+# No encoder: the null muxer's wrapped_avframe is still sized from the first
+# frame, and nvenc would tie the case to the build's minimum driver (master
+# needs NVENC API 13.1, driver 610+).
 run_cuda_hw_frames() {
     local log="$logdir/cuda-hw-frames.log"
     "$FFMPEG" -nostdin -hide_banner -nostats -loglevel info \
         -hwaccel cuda -hwaccel_output_format cuda -i "$sample" -i "$overlay" \
         -filter_complex "[0:0]scale_cuda=format=yuv420p[v];[1:0]hwupload_cuda[wm];[v][wm]overlay_cuda[ov]" \
-        -map "[ov]" -c:v h264_nvenc -f null - >"$log" 2>&1
+        -map "[ov]" -f null - >"$log" 2>&1
     check_size cuda-hw-frames "$log"
 }
 

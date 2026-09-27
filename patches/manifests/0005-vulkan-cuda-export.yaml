@@ -69,7 +69,8 @@ last_verified:
   date: 2026-09-27
   builds:
     without_patch: n8.1.2-50-g1a748fe2cd-20260831      # stock BtbN 8.1.2
-    with_patch:    n8.1.2-20260907-etv-g14f231eb
+    with_patch:    n8.1.2-etv.1                        # release 8.1.2-1; earlier
+                                                       # n8.1.2-20260907-etv-g14f231eb
     upstream_fix:  N-126905-gb87602a63a-20260927       # BtbN master, unpatched
   how: >-
     Quadro P620 (driver 582.78), Windows 11 26100, Vulkan device derived from
@@ -82,7 +83,8 @@ last_verified:
     same decode -> libplacebo -> hwupload_cuda -> scale_cuda chain on the
     1080p_hevc_10_hdr.ts fixture; the ffpipeline test itself fails on master
     only at hevc_nvenc open, because master requires NVENC API 13.1 (driver
-    610+) and this host has 582.78.
+    610+) and this host has 582.78. Release 8.1.2-1 win64 zip (SHA256SUMS
+    verified) on the same host: reproducer passes all three, exit 0.
 remove_when: >-
   The reproducer passes on an unpatched build on a Windows NVIDIA host (a Linux
   pass means nothing, see the PLATFORM note) - expected once the build moves to

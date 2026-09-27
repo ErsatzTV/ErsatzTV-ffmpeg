@@ -38,10 +38,11 @@ notes:
      same file that has no -readrate, so the throttled input is video/audio only."
 last_verified:
   version: n8.1.2
-  date: 2026-08-19
+  date: 2026-09-27
   builds:
     without_patch: n8.1.2-20260813-etv-g25d21b2c   # 0006 only
     with_patch:    n8.1.2-20260819-etv-g3c0520f9   # 0006 + 0007
+    release:       n8.1.2-etv.1                    # release 8.1.2-1, win64
   how: >-
     Reproducer: 14.00s stall / exit 1 without the patch, 0.51s / exit 0 with it.
     Pacing still tracks readrate (ratio converges to 1.048 over 90s, linear, no
@@ -51,4 +52,7 @@ last_verified:
     120s of media in 116.79s wall with no stall after startup - including the
     42.80s subtitle gap at 111.44 that previously caused a 41.751s freeze.
     Sparse-only fallback confirmed unchanged from the pre-0007 build.
+    2026-09-27, Windows 11: release 8.1.2-1 win64 zip (SHA256SUMS verified)
+    0.58s / exit 0; stock BtbN n8.1.2-50-g1a748fe2cd-20260831 14.96s at media
+    21.64 / exit 1.
 remove_when: "An equivalent upstream fix is present and the unpatched reproducer passes"
