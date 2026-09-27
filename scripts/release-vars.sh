@@ -20,7 +20,7 @@ fi
 
 case "$mode" in
     dev) extra="etv.dev.$(printf '%s' "$commit" | cut -c1-8)" ;;
-    release) extra="etv.$(jq -r '.revision' "$root/release.json")" ;;
+    release) extra="etv.$(jq -r '.revision' "$root/release.json" | tr -d '\r')" ;;
     *) echo "release-vars: mode must be dev or release, got '$mode'" >&2; exit 1 ;;
 esac
 
@@ -32,4 +32,4 @@ jq -r --arg extra "$extra" '
     "ETV_REVISION=\(.revision)",
     "RELEASE_TAG=\(.ffmpeg.version)-\(.revision)",
     "FFMPEG_EXTRA_VERSION=\($extra)"
-' "$root/release.json"
+' "$root/release.json" | tr -d '\r' # native jq.exe on Windows writes CRLF
