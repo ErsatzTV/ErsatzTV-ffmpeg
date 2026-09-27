@@ -73,7 +73,7 @@ if ! "$FFMPEG" -hide_banner -version >/dev/null 2>&1; then
     echo "ffmpeg not runnable: $FFMPEG" >&2
     exit 77
 fi
-if ! "$FFMPEG" -hide_banner -hwaccels 2>/dev/null | grep -qx 'amf'; then
+if ! "$FFMPEG" -hide_banner -hwaccels 2>/dev/null | grep -x 'amf' >/dev/null; then
     echo "this ffmpeg has no amf hwaccel; nothing to test" >&2
     exit 77
 fi
@@ -153,7 +153,7 @@ for c in $CASES; do
             listing="$("$FFMPEG" -hide_banner -decoders 2>/dev/null)"
             have=""
             for d in mpeg2_amf vc1_amf; do
-                if echo "$listing" | grep -qE "^ V[^ ]* +$d "; then
+                if echo "$listing" | grep -E "^ V[^ ]* +$d " >/dev/null; then
                     have="$have $d"
                 fi
             done

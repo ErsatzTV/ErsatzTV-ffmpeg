@@ -167,7 +167,7 @@ run_probe_device() {
         exit 77
     fi
     grep -iE "VAAPI driver|Using device|Initialize MFX session|implementation" "$log" | head -3 | sed 's/^/         /'
-    if ! "$FFMPEG" -hide_banner -h filter=vpp_qsv 2>/dev/null | grep -q '^ *pad_w '; then
+    if ! "$FFMPEG" -hide_banner -h filter=vpp_qsv 2>/dev/null | grep '^ *pad_w ' >/dev/null; then
         echo "FAIL: vpp_qsv has no pad_w option in this ffmpeg (unpatched build)"
         exit 1
     fi

@@ -50,9 +50,9 @@ ff -nostdin -hide_banner -nostats -loglevel error \
 expected=$(( DURATION * 60 ))
 
 has_vpp_pad=0
-"$FFMPEG" -hide_banner -h filter=vpp_qsv 2>/dev/null | grep -q '^ *pad_w ' && has_vpp_pad=1
+"$FFMPEG" -hide_banner -h filter=vpp_qsv 2>/dev/null | grep '^ *pad_w ' >/dev/null && has_vpp_pad=1
 has_pad_qsv=0
-"$FFMPEG" -hide_banner -filters 2>/dev/null | grep -q ' pad_qsv ' && has_pad_qsv=1
+"$FFMPEG" -hide_banner -filters 2>/dev/null | grep ' pad_qsv ' >/dev/null && has_pad_qsv=1
 
 run_arm() {
     local name="$1" graph="$2" best_rt="" best_ut="" best_frames="" log out

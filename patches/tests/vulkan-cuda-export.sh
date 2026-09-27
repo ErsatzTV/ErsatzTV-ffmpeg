@@ -168,7 +168,7 @@ for case in $CASES; do
                 "format=p010,hwupload,hwupload_cuda,hwdownload,format=p010" \
                 "format=p010" ;;
         libplacebo)
-            if ! "$FFMPEG" -hide_banner -filters 2>/dev/null | grep -q " libplacebo "; then
+            if ! "$FFMPEG" -hide_banner -filters 2>/dev/null | grep " libplacebo " >/dev/null; then
                 echo "SKIP: libplacebo - filter not built in"
                 skip=$((skip + 1))
                 continue
