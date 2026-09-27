@@ -382,7 +382,7 @@ RUN cd /tmp/zimg && \
     make install
 
 # ffmpeg
-COPY patches/ /tmp/ffmpeg-patches/
+COPY patches/*.patch /tmp/ffmpeg-patches/
 RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
     FFMPEG=${FFMPEG_HARD}; \
     else \

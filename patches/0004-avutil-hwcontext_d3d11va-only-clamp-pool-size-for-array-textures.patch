@@ -1,0 +1,33 @@
+diff --git a/libavutil/hwcontext_d3d11va.c b/libavutil/hwcontext_d3d11va.c
+index af7b319df5..8a839641aa 100644
+--- a/libavutil/hwcontext_d3d11va.c
++++ b/libavutil/hwcontext_d3d11va.c
+@@ -293,8 +293,6 @@ static int d3d11va_frames_init(AVHWFramesContext *ctx)
+     hwctx->BindFlags |= device_hwctx->BindFlags;
+     hwctx->MiscFlags |= device_hwctx->MiscFlags;
+ 
+-    ctx->initial_pool_size = FFMIN(ctx->initial_pool_size, MAX_ARRAY_SIZE);
+-
+     texDesc = (D3D11_TEXTURE2D_DESC){
+         .Width      = ctx->width,
+         .Height     = ctx->height,
+@@ -329,6 +327,19 @@ static int d3d11va_frames_init(AVHWFramesContext *ctx)
+      * vpp_qsv output pools (MFX_MEMTYPE_FROM_VPPOUT) to D3D11_BIND_RENDER_TARGET.
+      * Confirmed still required on Intel UHD (TGL) and Arc (DG2). */
+     } else if (!(texDesc.BindFlags & D3D11_BIND_RENDER_TARGET) && texDesc.ArraySize > 0) {
++        /* Only an actual array texture is bound by MAX_ARRAY_SIZE, so clamp here
++         * rather than unconditionally. Clamping ctx->initial_pool_size up front
++         * also shrank pools that never allocate an array (the branch above uses
++         * per-frame single textures), and a parent hwframes context sizes its own
++         * surface array from that same field before this runs -- qsv then believes
++         * it has initial_pool_size surfaces while the child was silently reduced to
++         * MAX_ARRAY_SIZE, and the two desync ("Error synchronizing the operation").
++         * Keep the two in step by clamping both together. */
++        if (texDesc.ArraySize > MAX_ARRAY_SIZE) {
++            texDesc.ArraySize      = MAX_ARRAY_SIZE;
++            ctx->initial_pool_size = MAX_ARRAY_SIZE;
++        }
++
+         hr = ID3D11Device_CreateTexture2D(device_hwctx->device, &texDesc, NULL, &hwctx->texture);
+         if (FAILED(hr)) {
+             av_log(ctx, AV_LOG_ERROR, "Could not create the texture (%lx)\n", (long)hr);

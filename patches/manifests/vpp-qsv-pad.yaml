@@ -1,0 +1,84 @@
+id: vpp-qsv-pad
+patch: 0009-lavfi-vf_vpp_qsv-add-pad-support-via-mfxExtVPPComposite.patch
+based_on: n8.1.2
+status: local
+author: McKenzie Pepper (ErsatzTV/ErsatzTV-ffmpeg PR 42, taken as-is; correctness follow-up in 0010)
+upstream:
+  issue: null
+  commits: []
+  # No pad_qsv or vpp_qsv pad upstream as of origin/master e4ed85ab73
+  # (2026-09-07). vf_vpp_qsv.c is byte-identical between n8.1.2 and master.
+dependencies:
+  - qsvvpp-composite-timestamp   # without 0008 every padded output frame has pts 0
+platforms:
+  - linux-qsv                    # VAAPI child device
+  - windows-qsv                  # D3D11 child device
+reproducer: tests/vpp-qsv-pad.sh
+samples:
+  - path: samples/h264-1920x1080-coded-1088.mkv
+    sha256: "60fc64179c722f2a80f03ccec185a52223b93672fb26079231e7c84461cf25f6"
+    # Decoder surfaces are 1920x1088 with CropH=1080; padded to 1920x1200 the
+    # 8 surface padding rows must not leak below the picture.
+  - path: samples/overlay-320x180.jpg
+    sha256: "11e16bbd9f38cbda4fce1a33a841748ad803390d457b78ecac8f7e70ad5adb75"
+  - path: samples/1080p_hevc_10_hdr.ts
+    sha256: "94b7c3eb9f34feab28d71aae2f8ba95157ec7d393ee24d362711092bd598dc5b"
+    # Copy of ErsatzTV/next crates/ffpipeline/tests/fixtures/1080p_hevc_10_hdr.ts:
+    # synthetic 1080p24 HEVC Main10 HDR10 (PQ/BT.2020, mastering display
+    # 1000 nits, MaxCLL 1000 / MaxFALL 400), 48 frames, luma 42..966. Only the
+    # tonemap probe uses it; vpp_qsv tonemap=1 needs that side data.
+failure_without_patch:
+  - "vpp_qsv has no pad_w/pad_h/pad_x/pad_y/pad_color; reproducer exits 1 at the probe"
+  - "ErsatzTV's QSV pipeline pads in software: hwdownload,format=nv12,pad=... then hwupload"
+success_with_patch:
+  - "vpp_qsv=w=W:h=H:pad_w=PW:pad_h=PH scales and pads in one VPP pass"
+  - "borders measure video black (16/128/128 at 8 bit, 64/512/512 at 10 bit), unscaled picture region is a lossless copy (psnr inf)"
+  - "decoded 1080p (1088-row surfaces) padded to 1200 rows shows no seam; pts strictly increasing"
+notes:
+  - "Mechanism: single-stream mfxExtVPPComposite. QSV VPP has no output-region +
+     background-colour operation like VAAPI; composition is the only VPP mode
+     that fills pixels the input does not cover. libvpl documents no minimum
+     NumInputStream and no in-tree filter uses 1, so the reproducer measures the
+     border rather than trusting the runtime."
+  - "Why fused into vpp_qsv rather than a standalone pad_qsv: a standalone
+     filter (branch pad-qsv in ~/code/FFmpeg/FFmpeg, 6/6 cases green on Arc) was
+     built and benchmarked against this on an N100 (Debian trixie):
+       ceiling vpp_qsv scale only        325 fps  9.2 s CPU
+       vpp_qsv scale + pad_qsv           190 fps 11.6 s CPU
+       vpp_qsv scale+pad fused (this)    222 fps  9.3 s CPU
+       vpp_qsv + hwdownload/pad/hwupload  71 fps 47.1 s CPU
+     The fused pass is 17% faster and uses no more CPU than scaling alone."
+  - "Composition is documented to skip every VPP operation except deinterlacing
+     and scaling. ErsatzTV keeps deinterlace and tonemap in separate vpp_qsv
+     instances, so the pad instance only ever scales. 0010 turns the documented
+     skips into configuration errors; the reproducer's probes measured which
+     operations actually survive (procamp no, tonemap runtime-dependent,
+     framerate conversion yes)."
+  - "API surface the ErsatzTV 'next' pipeline gates on: vpp_qsv -h lists pad_w."
+last_verified:
+  version: n8.1.2
+  date: 2026-09-07
+  builds:
+    without_patch: n8.1.2-20260819-etv-g3c0520f9 (no pad_w option)
+    with_patch:    n8.1.2-20260907-etv-g38cd5732-dirty (vpp-pad2 linux64 / win64)
+  how: >-
+    2026-09-07, tests/vpp-qsv-pad.sh 8/8 on every host, all oneVPL 2.17:
+      Arc A750, Linux, iHD 26.2.4
+      Arc A750, Windows 11, D3D11 child device (8086:56a1)
+      Arc A310, Linux, iHD 26.2.2 (runtime 2.15)
+      N100 (Alder Lake-N), Debian trixie, iHD 25.2.3
+    Windows measures borders within tolerance but not bit-exact (red V=241 vs
+    240, P010 chroma 514 vs 512); Linux is exact.
+    Borders 16/128/128 (nv12) and 64/512/512 (p010), unscaled picture psnr inf,
+    decoded-1088 bottom strip 16/128/128 over 50 frames, pipeline case encodes
+    1920x1080. Probes: procamp next to padding silently IGNORED on Linux
+    (picture YAVG 126 with and without, 214 when procamp runs alone), hence
+    rejected by 0010; framerate=50 with padding HONOURED (49 frames from 25)
+    on every host; HDR10 tonemapping (samples/1080p_hevc_10_hdr.ts, side data
+    present) next to padding DROPPED on Linux Arc A310 (picture YAVG 421.3 vs
+    421.5 untouched, 451.5 when tonemap runs alone) but HONOURED on Windows
+    A750 D3D11 with the same sample (451.5 with and without padding), i.e.
+    runtime dependent, hence rejected by 0010;
+    out_range=pc probe inconclusive (the option did not change the picture
+    even without padding). Throughput on the N100 is in notes.
+remove_when: "the base version ships a hardware pad for QSV frames and the unpatched reproducer passes"

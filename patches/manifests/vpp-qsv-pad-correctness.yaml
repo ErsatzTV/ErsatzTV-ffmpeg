@@ -1,0 +1,45 @@
+id: vpp-qsv-pad-correctness
+patch: 0010-lavfi-vf_vpp_qsv-pad-honour-colour-matrix-and-range-snap-to-chroma-grid.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  commits: []
+dependencies:
+  - vpp-qsv-pad                  # modifies the pad block 0009 adds
+platforms:
+  - linux-qsv
+  - windows-qsv
+reproducer: tests/vpp-qsv-pad.sh
+samples: []
+failure_without_patch:
+  - "pad_color is converted with fixed BT.601 limited constants: red on a bt709/tv link is 81/90/240 where the software pad filter gives 63/102/240 (nv12-offset-color fails by ~18 in Y)"
+  - "odd pad_x/pad_y on NV12/P010 hand the driver an odd DstX/DstY (odd-offset case: picture lands one pixel off, psnr collapses)"
+  - "denoise/detail/procamp/tonemap/colour conversion combined with padding are silently dropped by composition mode with no diagnostic (procamp measured on every host, tonemap measured on Linux A310)"
+success_with_patch:
+  - "background colour uses out_color_matrix/out_range when set, else the input link's matrix and range, else BT.709 limited, at the output bit depth"
+  - "pad geometry is snapped to the output format's chroma grid (canvas up, offset down) with a verbose log line"
+  - "denoise, detail, procamp, tonemap and colour conversion together with padding are a configuration error naming a separate vpp_qsv instance as the fix; framerate conversion (measured honoured) stays allowed"
+notes:
+  - "Black is unaffected by the colour change (16/128/128 and 64/512/512 under both conversions), so ErsatzTV's output is identical with and without this patch; it matters for pad_color other than black."
+last_verified:
+  version: n8.1.2
+  date: 2026-09-07
+  builds:
+    without_patch: n8.1.2 + 0008 + 0009 only (not built separately; failure modes derived from reading 0009)
+    with_patch:    n8.1.2-20260907-etv-g38cd5732-dirty (vpp-pad2 linux64 / win64)
+  how: >-
+    2026-09-07, tests/vpp-qsv-pad.sh 8/8 on every host, all oneVPL 2.17:
+      Arc A750, Linux, iHD 26.2.4
+      Arc A750, Windows 11, D3D11 child device (8086:56a1)
+      Arc A310, Linux, iHD 26.2.2 (runtime 2.15)
+      N100 (Alder Lake-N), Debian trixie, iHD 25.2.3
+    Windows measures borders within tolerance but not bit-exact (red V=241 vs
+    240, P010 chroma 514 vs 512); Linux is exact.
+    nv12-offset-color measures 63/102/240 (Windows 63/102/241) against the
+    software pad reference on a bt709/tv link (0009 alone would give
+    81/90/240). odd-offset (pad_x=101, pad_y=41) places the picture at (100,40)
+    with psnr inf on every host. procamp-probe reports "REJECTED at
+    configuration" everywhere; tonemap-probe measured DROPPED on Linux A310
+    with the 0010 that only warned, which is why the final 0010 rejects it.
+remove_when: "retired together with vpp-qsv-pad"

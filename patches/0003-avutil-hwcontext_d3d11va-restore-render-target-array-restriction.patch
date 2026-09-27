@@ -1,0 +1,20 @@
+diff --git a/libavutil/hwcontext_d3d11va.c b/libavutil/hwcontext_d3d11va.c
+index 418fe9dfda..af7b319df5 100644
+--- a/libavutil/hwcontext_d3d11va.c
++++ b/libavutil/hwcontext_d3d11va.c
+@@ -321,7 +321,14 @@ static int d3d11va_frames_init(AVHWFramesContext *ctx)
+         ctx->initial_pool_size = texDesc2.ArraySize;
+         hwctx->BindFlags = texDesc2.BindFlags;
+         hwctx->MiscFlags = texDesc2.MiscFlags;
+-    } else if (texDesc.ArraySize > 0) {
++    /* Textures with D3D11_BIND_RENDER_TARGET cannot be allocated as an array
++     * with .ArraySize > 2; ID3D11Device_CreateTexture2D() fails with E_INVALIDARG.
++     * Fall through to per-frame single textures (d3d11va_alloc_single) instead.
++     * This restriction was added in 4f78711f9c and removed again in efd484cb2d,
++     * which breaks all QSV pipelines on Windows: qsv maps both hwupload pools and
++     * vpp_qsv output pools (MFX_MEMTYPE_FROM_VPPOUT) to D3D11_BIND_RENDER_TARGET.
++     * Confirmed still required on Intel UHD (TGL) and Arc (DG2). */
++    } else if (!(texDesc.BindFlags & D3D11_BIND_RENDER_TARGET) && texDesc.ArraySize > 0) {
+         hr = ID3D11Device_CreateTexture2D(device_hwctx->device, &texDesc, NULL, &hwctx->texture);
+         if (FAILED(hr)) {
+             av_log(ctx, AV_LOG_ERROR, "Could not create the texture (%lx)\n", (long)hr);

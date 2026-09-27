@@ -1,0 +1,66 @@
+id: d3d11va-pool-size-clamp
+patch: 0004-avutil-hwcontext_d3d11va-only-clamp-pool-size-for-array-textures.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. The clamp itself (ctx->initial_pool_size = FFMIN(...,
+  # MAX_ARRAY_SIZE), hwcontext_d3d11va.c:296) is unchanged in master as of
+  # 2026-08-20 and predates the 0003 regression; it only becomes harmful once a
+  # RENDER_TARGET pool takes the single-texture path, which is what 0003 restores.
+  # Upstream therefore cannot hit this in the same way, and a standalone report
+  # would have to explain the whole QSV pool arrangement first.
+  commits: []
+dependencies:
+  - d3d11va-render-target-array   # 0004's diff context includes the else-if line
+                                  # 0003 introduces; git apply fails without it.
+                                  # The two must be added and removed together.
+platforms:
+  - windows-qsv               # same reachability as d3d11va-render-target-array
+reproducer: tests/d3d11va-render-target-pool.sh   # case oversized-pool
+samples: []
+failure_without_patch:
+  # Measured on a 0003-only build; see last_verified.
+  - "[AVHWFramesContext] Error synchronizing the operation"
+  - "[hwupload] Failed to upload frame: -1313558101 (AVERROR_UNKNOWN)"
+  - "ffmpeg then HANGS instead of exiting - the reproducer bounds every run with a timeout"
+success_with_patch:
+  - "pool of 66 surfaces built and encoded; parent and child agree on the surface count"
+notes:
+  - "MECHANISM: the clamp runs before the branch that decides how to allocate, so
+     it shrinks ctx->initial_pool_size even when no array texture is created. By
+     that point the parent QSV frames context has already sized its own surface
+     array from the same field (hwcontext_qsv.c:585 copies initial_pool_size down
+     to the child). Parent keeps 66, child gets 64, and MFX then references
+     surfaces the child never allocated. The patch moves the clamp inside the
+     array branch, where ArraySize is what actually needs bounding."
+  - "ONLY REACHABLE ABOVE MAX_ARRAY_SIZE (64), which is why the reproducer needs
+     two cases: a 64-surface pool passes on a 0003-only build and a 66-surface one
+     does not. Nothing in ErsatzTV's current pipeline builds a pool that large -
+     hwupload is dynamic (0), vpp_qsv is 0 or exactly 64, and the decoder is 0 or
+     suggest_pool_size + 16. The reproducer is the only coverage this patch has."
+  - "The original trigger was ErsatzTV passing hwupload=extra_hw_frames=64 on
+     Windows, i.e. 2 + 64 = 66 surfaces. That was removed from the pipeline on
+     2026-08-20 for an unrelated reason (a fixed pool breaks the QSV encoder
+     across a filter graph reinit), which is what left this patch untested and
+     prompted this manifest."
+last_verified:
+  version: n8.1.2
+  date: 2026-08-20
+  builds:
+    without_patch: n8.1.2-20260820-etv-gebbbcbe9-dirty  # 0003 applied, 0004 removed
+    with_patch:    n8.1.2-20260819-etv-g3c0520f9
+  how: >-
+    Reproducer on Intel UHD Graphics (TGL, device 8086:9a60), oneVPL runtime 2.15,
+    child device d3d11va. On the 0003-only build the render-target-array case
+    passes and oversized-pool fails with "Error synchronizing the operation" ->
+    "Failed to upload frame: -1313558101", after which ffmpeg hangs and is killed
+    by the 60s timeout; script exits 1. On the etv build both cases pass, script
+    exits 0. On stock BtbN 8.1.2 both cases fail earlier, at 0003's E_INVALIDARG,
+    so that build cannot distinguish this patch.
+remove_when: >-
+  The oversized-pool case passes on a build that has d3d11va-render-target-array
+  but not this patch - i.e. upstream stops clamping initial_pool_size outside the
+  array-allocation branch, or the parent hwframes context stops deriving its
+  surface count from the child's pre-clamp value. Removing d3d11va-render-target-array
+  also forces this patch out, since it will no longer apply.
