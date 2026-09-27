@@ -7,7 +7,6 @@ ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4"
 
 ENV AOM=v3.12.0 \
-    FDKAAC=2.0.3 \
     FFMPEG_HARD=8.1.2 \
     FONTCONFIG=2.16.0 \
     FREETYPE=2.13.3 \
@@ -105,19 +104,6 @@ RUN mkdir /tmp/dav1d/build && cd /tmp/dav1d/build && \
     meson setup -Denable_tools=false -Denable_tests=false --libdir /usr/local/lib .. && \
     ninja && \
     ninja install
-
-# fdk-aac
-RUN mkdir -p /tmp/fdk-aac && \
-    curl -Lf \
-    https://github.com/mstorsjo/fdk-aac/archive/v${FDKAAC}.tar.gz | \
-    tar -zx --strip-components=1 -C /tmp/fdk-aac
-RUN cd /tmp/fdk-aac && \
-    autoreconf -fiv && \
-    ./configure \
-    --disable-static \
-    --enable-shared && \
-    make && \
-    make install
 
 # freetype
 RUN mkdir -p /tmp/freetype && \
@@ -418,7 +404,6 @@ RUN cd /tmp/ffmpeg && \
     --enable-libaom \
     --enable-libdav1d \
     --enable-libass \
-    --enable-libfdk_aac \
     --enable-libfreetype \
     --enable-libharfbuzz \
     --enable-libkvazaar \
@@ -438,7 +423,6 @@ RUN cd /tmp/ffmpeg && \
     --enable-libx264 \
     --enable-libx265 \
     --enable-libxvid \
-    --enable-nonfree \
     --enable-openssl \
     --enable-small \
     --enable-stripping \

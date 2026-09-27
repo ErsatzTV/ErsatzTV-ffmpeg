@@ -8,7 +8,6 @@ ENV MAKEFLAGS="-j4" \
     PATH="/root/.cargo/bin:${PATH}"
 
 ENV AOM=v3.14.1 \
-    FDKAAC=2.0.3 \
     FFMPEG_HARD=8.1.2 \
     FONTCONFIG=2.16.0 \
     FREETYPE=2.14.3 \
@@ -154,20 +153,6 @@ RUN cd /tmp/aom && \
     -DBUILD_STATIC_LIBS=0 .. && \
     make && \
     make install
-
-# fdk-aac
-RUN mkdir -p /tmp/fdk-aac && \
-    curl -Lf \
-    https://github.com/mstorsjo/fdk-aac/archive/v${FDKAAC}.tar.gz | \
-    tar -zx --strip-components=1 -C /tmp/fdk-aac
-RUN cd /tmp/fdk-aac && \
-    autoreconf -fiv && \
-    ./configure \
-    --disable-static \
-    --enable-shared && \
-    make && \
-    make install && \
-    strip -d /usr/local/lib/libfdk-aac.so
 
 # ffnvcodec
 RUN mkdir -p /tmp/ffnvcodec && \
@@ -692,7 +677,6 @@ RUN cd /tmp/ffmpeg && \
     --enable-libaom \
     --enable-libdav1d \
     --enable-libass \
-    --enable-libfdk_aac \
     --enable-libfontconfig \
     --enable-libfreetype \
     --enable-libfribidi \
@@ -717,7 +701,6 @@ RUN cd /tmp/ffmpeg && \
     --enable-libx265 \
     --enable-libxvid \
     --enable-libzimg \
-    --enable-nonfree \
     --enable-nvdec \
     --enable-nvenc \
     --enable-opencl \
