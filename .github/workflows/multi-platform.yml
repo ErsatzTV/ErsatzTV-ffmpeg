@@ -41,6 +41,7 @@ jobs:
         run: |
           platform=${{ matrix.platform }}
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
+          scripts/release-vars.sh "${{ github.event.pull_request.head.sha || github.sha }}" >> $GITHUB_ENV
 
       - name: Docker meta
         id: meta
@@ -68,6 +69,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max,ignore-error=true
           platforms: ${{ matrix.platform }}
+          build-args: |
+            FFMPEG_VERSION=${{ env.FFMPEG_VERSION }}
+            FFMPEG_SHA256=${{ env.FFMPEG_SHA256 }}
+            FFMPEG_EXTRA_VERSION=${{ env.FFMPEG_EXTRA_VERSION }}
           push: ${{ github.ref == 'refs/heads/main' }}
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ env.IMAGE_NAME }}

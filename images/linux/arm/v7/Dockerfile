@@ -7,7 +7,6 @@ ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4"
 
 ENV AOM=v3.12.0 \
-    FFMPEG_HARD=8.1.2 \
     FONTCONFIG=2.16.0 \
     FREETYPE=2.13.3 \
     FRIBIDI=1.0.16 \
@@ -376,24 +375,25 @@ RUN cd /tmp/xvid/build/generic && \
     make && \
     make install
 
-# ffmpeg
+# ffmpeg (version inputs come from release.json via scripts/release-vars.sh)
+ARG FFMPEG_VERSION
+ARG FFMPEG_SHA256
 COPY patches/*.patch /tmp/ffmpeg-patches/
-RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
-    FFMPEG=${FFMPEG_HARD}; \
-    else \
-    FFMPEG=${FFMPEG_VERSION}; \
-    fi && \
+RUN : "${FFMPEG_VERSION:?build arg required}" "${FFMPEG_SHA256:?build arg required}" && \
     mkdir -p /tmp/ffmpeg && \
-    echo "https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2" && \
-    curl -Lf \
-    https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2 | \
-    tar -jx --strip-components=1 -C /tmp/ffmpeg && \
+    curl -Lf -o /tmp/ffmpeg.tar.bz2 \
+    https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 && \
+    echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.bz2" | sha256sum -c - && \
+    tar -jx --strip-components=1 -C /tmp/ffmpeg -f /tmp/ffmpeg.tar.bz2 && \
+    rm /tmp/ffmpeg.tar.bz2 && \
     for p in /tmp/ffmpeg-patches/*.patch; do \
     [ -e "$p" ] || continue; \
     echo "Applying FFmpeg patch: $p"; \
     patch -d /tmp/ffmpeg -p1 < "$p" || exit 1; \
     done
-RUN cd /tmp/ffmpeg && \
+ARG FFMPEG_EXTRA_VERSION
+RUN : "${FFMPEG_EXTRA_VERSION:?build arg required}" && \
+    cd /tmp/ffmpeg && \
     ./configure \
     --disable-debug \
     --disable-doc \
@@ -427,7 +427,7 @@ RUN cd /tmp/ffmpeg && \
     --enable-small \
     --enable-stripping \
     --enable-version3 \
-    --extra-version=etv-g14f231eb \
+    --extra-version=${FFMPEG_EXTRA_VERSION} \
     --extra-libs=-ldl \
     --extra-libs=-lpthread && \
     make
@@ -459,6 +459,11 @@ COPY --from=devel-base /buildout/ /
 RUN apt-get update && \
     apt-get install -y libicu-dev tzdata fontconfig fonts-noto-core fonts-noto-cjk libgdiplus libdrm2 && \
     rm -rf /var/lib/apt/lists/*
+
+ARG FFMPEG_VERSION
+ARG FFMPEG_EXTRA_VERSION
+RUN --mount=type=bind,source=scripts/verify-ffmpeg.sh,target=/tmp/verify-ffmpeg.sh \
+    sh /tmp/verify-ffmpeg.sh /usr/local/bin "${FFMPEG_VERSION}" "${FFMPEG_EXTRA_VERSION}"
 
 CMD         ["--help"]
 ENTRYPOINT  ["ffmpeg"]

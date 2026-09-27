@@ -8,7 +8,6 @@ ENV MAKEFLAGS="-j4" \
     PATH="/root/.cargo/bin:${PATH}"
 
 ENV AOM=v3.14.1 \
-    FFMPEG_HARD=8.1.2 \
     FONTCONFIG=2.16.0 \
     FREETYPE=2.14.3 \
     FRIBIDI=1.0.16 \
@@ -644,25 +643,26 @@ RUN cd /tmp/zimg && \
     make && \
     make install
 
-# ffmpeg
+# ffmpeg (version inputs come from release.json via scripts/release-vars.sh)
+ARG FFMPEG_VERSION
+ARG FFMPEG_SHA256
 COPY patches/*.patch /tmp/ffmpeg-patches/
-RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
-    FFMPEG=${FFMPEG_HARD}; \
-    else \
-    FFMPEG=${FFMPEG_VERSION}; \
-    fi && \
+RUN : "${FFMPEG_VERSION:?build arg required}" "${FFMPEG_SHA256:?build arg required}" && \
     mkdir -p /tmp/ffmpeg && \
-    echo "https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2" && \
-    curl -Lf \
-    https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2 | \
-    tar -jx --strip-components=1 -C /tmp/ffmpeg && \
+    curl -Lf -o /tmp/ffmpeg.tar.bz2 \
+    https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 && \
+    echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.bz2" | sha256sum -c - && \
+    tar -jx --strip-components=1 -C /tmp/ffmpeg -f /tmp/ffmpeg.tar.bz2 && \
+    rm /tmp/ffmpeg.tar.bz2 && \
     for p in /tmp/ffmpeg-patches/*.patch; do \
     [ -e "$p" ] || continue; \
     echo "Applying FFmpeg patch: $p"; \
     patch -d /tmp/ffmpeg -p1 < "$p" || exit 1; \
     done
 
-RUN cd /tmp/ffmpeg && \
+ARG FFMPEG_EXTRA_VERSION
+RUN : "${FFMPEG_EXTRA_VERSION:?build arg required}" && \
+    cd /tmp/ffmpeg && \
     ./configure \
     --ld=clang++ \
     --disable-debug \
@@ -711,7 +711,7 @@ RUN cd /tmp/ffmpeg && \
     --enable-vdpau \
     --enable-version3 \
     --enable-vulkan \
-    --extra-version=etv-g14f231eb \
+    --extra-version=${FFMPEG_EXTRA_VERSION} \
     --extra-libs=-ldl \
     --extra-libs=-lpthread && \
     make
@@ -833,6 +833,11 @@ RUN apt-get -yqq update && \
     rm -f /usr/lib/x86_64-linux-gnu/dri/${d}_drv_video.so && \
     ln -s /usr/local/lib/x86_64-linux-gnu/dri/${d}_drv_video.so /usr/lib/x86_64-linux-gnu/dri/${d}_drv_video.so; \
     done
+
+ARG FFMPEG_VERSION
+ARG FFMPEG_EXTRA_VERSION
+RUN --mount=type=bind,source=scripts/verify-ffmpeg.sh,target=/tmp/verify-ffmpeg.sh \
+    sh /tmp/verify-ffmpeg.sh /usr/local/bin "${FFMPEG_VERSION}" "${FFMPEG_EXTRA_VERSION}"
 
 CMD         ["--help"]
 ENTRYPOINT  ["ffmpeg"]
