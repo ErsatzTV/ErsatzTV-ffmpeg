@@ -26,7 +26,7 @@ notes:
   - "INCOMPLETE FIX. It corrects where the sleep is computed but not what from:
      the slowest stream is still chosen as the minimum of ds->dts - first_dts,
      which a sparse subtitle track always wins, so the full-gap stall survives.
-     See readrate-slowest-stream-stall (0007), which depends on this patch."
+     See readrate-sparse-stream-stall (0007), which depends on this patch."
 last_verified:
   version: n8.1.2
   date: 2026-08-19
