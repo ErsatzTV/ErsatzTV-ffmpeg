@@ -85,11 +85,6 @@ jobs:
             platform: linux/arm64
             os: ubuntu-24.04-arm
             test: true
-          # emulated, so the readrate timing test isn't meaningful here
-          - name: arm32v7
-            platform: linux/arm/v7
-            os: ubuntu-latest
-            test: false
     steps:
       - name: Clean tools folder
         run: cd /opt && find . -maxdepth 1 -mindepth 1 '!' -path ./containerd '!' -path ./actionarchivecache '!' -path ./runner '!' -path ./runner-cache -exec rm -rf '{}' ';'
@@ -299,7 +294,7 @@ jobs:
         run: |
           set --
           for f in "$RUNNER_TEMP"/digests/*; do set -- "$@" "$IMAGE_NAME@sha256:${f##*/}"; done
-          [ $# -eq 3 ] || { echo "::error::expected 3 platform digests, got $#"; exit 1; }
+          [ $# -eq 2 ] || { echo "::error::expected 2 platform digests, got $#"; exit 1; }
           want=$(printf '%s\n' "$@" | sed 's/.*@//' | sort)
           if ! docker buildx imagetools inspect "$IMAGE_NAME:$RELEASE_TAG" >/dev/null 2>&1; then
             docker buildx imagetools create -t "$IMAGE_NAME:$RELEASE_TAG" "$@"
