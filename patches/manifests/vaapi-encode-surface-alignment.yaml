@@ -1,0 +1,64 @@
+id: vaapi-encode-surface-alignment
+patch: 0002-vaapi_encode-query-surface-alignment-regardless-of-libva-build-version.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  commits: []
+  # vaapi_encode_surface_alignment() is still wrapped in
+  # #if VA_CHECK_VERSION(1, 21, 0) in FFmpeg master as of 2026-09-26. Not
+  # reported upstream.
+dependencies: []
+platforms:
+  - linux-vaapi               # radeonsi; any driver that reports
+                              # VASurfaceAttribAlignmentSize is affected, and
+                              # drivers that do not report it are unaffected
+reproducer: tests/vaapi-encode-surface-alignment.sh
+samples: []                   # synthetic lavfi source
+failure_without_patch:
+  - "hevc_vaapi 1920x1080 decodes as 1920x1088, 1440x1080 as 1472x1088, 854x480 as 894x480"
+  - "reproducer reports FAIL for every size and exits 1"
+success_with_patch:
+  - "every size decodes as requested; reproducer exits 0"
+notes:
+  - "WHY THIS BUILD NEEDS IT: 50-libva.sh pins libva 2.20.0 (VA-API 1.20) so the
+     linux64 import lib only references symbols present on Ubuntu 24.04. The
+     alignment query is gated on the build-time VA-API version, so against those
+     headers it is compiled out entirely, even though the attribute is only ever
+     consumed at runtime and vaQuerySurfaceAttributes() works with any libva."
+  - "MECHANISM: with surface_alignment_{width,height} left at 0, hevc_vaapi
+     writes an SPS whose picture size is the visible size with no conformance
+     window. radeonsi codes the aligned size anyway and rewrites the picture
+     dimensions in the packed header, so the cropping is lost. h264_vaapi is
+     unaffected - it always aligns to 16x16 macroblocks and crops; all three
+     sizes come out correct from the unpatched build."
+  - "BOTH SIDES MUST BE >= 1.21: mesa's VA frontend gates the attribute behind the
+     same compile-time check. Distro mesa built against libva < 2.21 never reports
+     it, and then the output is equally wrong with or without this patch. The
+     ErsatzTV-ffmpeg docker image hit that half instead and fixed it by building
+     mesa against libva 2.23 (ErsatzTV-ffmpeg c8638a4) - it does not carry this
+     patch. The reproducer prints the VAAPI driver for that reason."
+  - "STOCK BTBN IS ALSO AFFECTED, UNEXPLAINED: the stock n8.1.2-20260722 build
+     fails the reproducer and contains no alignment query (the query's error
+     string is absent from the binary, and LIBVA_TRACE shows no extra
+     vaQuerySurfaceAttributes call), even though the libva pin it was built from
+     (28388a0) reports VA-API 1.25. So moving the libva pin to >= 2.21 is not
+     known to be enough to drop this patch - rerun the reproducer."
+last_verified:
+  version: n8.1.2
+  date: 2026-09-26
+  builds:
+    without_patch: n8.1.2 minimal, Ubuntu 24.04 libva-dev 2.20.0 headers
+    with_patch:    same build + 0002
+  how: >-
+    Reproducer on AMD Raven (1002:15d8), Ubuntu 26.04, mesa 26.0.3 radeonsi,
+    runtime libva 2.23. The two minimal builds came from the same source tree and
+    configure and differ only by this patch: without it all three sizes FAIL
+    (1920x1088, 1472x1088, 894x480), with it all PASS. LIBVA_TRACE shows the
+    patched build making the extra vaQuerySurfaceAttributes call on the encode
+    config. Shipped builds on the same host: stock n8.1.2-20260722 FAILs
+    identically, n8.1.2-20260916-etv-gb138f203 PASSes.
+remove_when: >-
+  Upstream stops gating the query on the build-time libva version, or this repo
+  builds against libva >= 2.21 - in either case only once the reproducer passes
+  on a build without the patch (see the stock-BtbN note above).

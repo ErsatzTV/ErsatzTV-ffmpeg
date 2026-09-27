@@ -1,0 +1,112 @@
+diff --git a/configure b/configure
+index 1759694274..7d71b88aa7 100755
+--- a/configure
++++ b/configure
+@@ -3633,6 +3633,7 @@ mp3_mediacodec_decoder_deps="mediacodec"
+ mp3_mediacodec_decoder_select="mpegaudioheader"
+ mpeg1_cuvid_decoder_deps="cuvid"
+ mpeg1_v4l2m2m_decoder_deps="v4l2_m2m mpeg1_v4l2_m2m"
++mpeg2_amf_decoder_deps="amf"
+ mpeg2_cuvid_decoder_deps="cuvid"
+ mpeg2_mmal_decoder_deps="mmal"
+ mpeg2_mediacodec_decoder_deps="mediacodec"
+@@ -3648,6 +3649,7 @@ mpeg4_mmal_decoder_deps="mmal"
+ mpeg4_omx_encoder_deps="omx"
+ mpeg4_v4l2m2m_decoder_deps="v4l2_m2m mpeg4_v4l2_m2m"
+ mpeg4_v4l2m2m_encoder_deps="v4l2_m2m mpeg4_v4l2_m2m"
++vc1_amf_decoder_deps="amf"
+ vc1_cuvid_decoder_deps="cuvid"
+ vc1_mmal_decoder_deps="mmal"
+ vc1_qsv_decoder_select="qsvdec"
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index 1410bd8142..f9137c84ae 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -572,6 +572,7 @@ OBJS-$(CONFIG_MPEG1VIDEO_DECODER)      += mpeg12dec.o mpeg12.o mpeg12data.o
+ OBJS-$(CONFIG_MPEG1VIDEO_ENCODER)      += mpeg12enc.o
+ OBJS-$(CONFIG_MPEG1_CUVID_DECODER)     += cuviddec.o
+ OBJS-$(CONFIG_MPEG1_V4L2M2M_DECODER)   += v4l2_m2m_dec.o
++OBJS-$(CONFIG_MPEG2_AMF_DECODER)       += amfdec.o
+ OBJS-$(CONFIG_MPEG2_MMAL_DECODER)      += mmaldec.o
+ OBJS-$(CONFIG_MPEG2_QSV_DECODER)       += qsvdec.o
+ OBJS-$(CONFIG_MPEG2_QSV_ENCODER)       += qsvenc_mpeg2.o
+@@ -790,6 +791,7 @@ OBJS-$(CONFIG_VBLE_DECODER)            += vble.o
+ OBJS-$(CONFIG_VC1_DECODER)             += vc1dec.o vc1_block.o vc1_loopfilter.o \
+                                           vc1_mc.o vc1_pred.o vc1.o vc1data.o \
+                                           msmpeg4_vc1_data.o wmv2data.o
++OBJS-$(CONFIG_VC1_AMF_DECODER)         += amfdec.o
+ OBJS-$(CONFIG_VC1_CUVID_DECODER)       += cuviddec.o
+ OBJS-$(CONFIG_VC1_MMAL_DECODER)        += mmaldec.o
+ OBJS-$(CONFIG_VC1_QSV_DECODER)         += qsvdec.o
+diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
+index 695214f192..755308997e 100644
+--- a/libavcodec/allcodecs.c
++++ b/libavcodec/allcodecs.c
+@@ -912,6 +912,7 @@ extern const FFCodec ff_mjpeg_vaapi_encoder;
+ extern const FFCodec ff_mp3_mediacodec_decoder;
+ extern const FFCodec ff_mp3_mf_encoder;
+ extern const FFCodec ff_mpeg1_cuvid_decoder;
++extern const FFCodec ff_mpeg2_amf_decoder;
+ extern const FFCodec ff_mpeg2_cuvid_decoder;
+ extern const FFCodec ff_mpeg2_qsv_encoder;
+ extern const FFCodec ff_mpeg2_vaapi_encoder;
+@@ -921,6 +922,7 @@ extern const FFCodec ff_mpeg4_mediacodec_encoder;
+ extern const FFCodec ff_mpeg4_omx_encoder;
+ extern const FFCodec ff_mpeg4_v4l2m2m_encoder;
+ extern const FFCodec ff_prores_videotoolbox_encoder;
++extern const FFCodec ff_vc1_amf_decoder;
+ extern const FFCodec ff_vc1_cuvid_decoder;
+ extern const FFCodec ff_vp8_cuvid_decoder;
+ extern const FFCodec ff_vp8_mediacodec_decoder;
+diff --git a/libavcodec/amfdec.c b/libavcodec/amfdec.c
+index c178d5d912..42e03aa745 100644
+--- a/libavcodec/amfdec.c
++++ b/libavcodec/amfdec.c
+@@ -110,6 +110,12 @@ static int amf_init_decoder(AVCodecContext *avctx)
+         case AV_CODEC_ID_AV1:
+             codec_id = AMFVideoDecoderHW_AV1;
+             break;
++        case AV_CODEC_ID_MPEG2VIDEO:
++            codec_id = AMFVideoDecoderUVD_MPEG2;
++            break;
++        case AV_CODEC_ID_VC1:
++            codec_id = AMFVideoDecoderUVD_VC1;
++            break;
+         default:
+             break;
+     }
+@@ -118,6 +124,28 @@ static int amf_init_decoder(AVCodecContext *avctx)
+     res = amf_device_ctx->factory->pVtbl->CreateComponent(amf_device_ctx->factory, amf_device_ctx->context, codec_id, &ctx->decoder);
+     AMF_RETURN_IF_FALSE(ctx, res == AMF_OK, AVERROR_ENCODER_NOT_FOUND, "CreateComponent(%ls) failed with error %d\n", codec_id, res);
+ 
++    // The runtime creates the MPEG-2 and VC-1 components on GPUs that have no
++    // such decoder (newer VCN blocks dropped both), Init() succeeds, and the
++    // first SubmitInput() then fails with AMF_NOT_SUPPORTED followed by a crash
++    // on teardown. Ask for caps up front and refuse cleanly instead.
++    if (avctx->codec->id == AV_CODEC_ID_MPEG2VIDEO || avctx->codec->id == AV_CODEC_ID_VC1) {
++        AMFCaps *caps = NULL;
++        AMF_ACCELERATION_TYPE accel = AMF_ACCEL_NOT_SUPPORTED;
++        res = ctx->decoder->pVtbl->GetCaps(ctx->decoder, &caps);
++        if (res == AMF_OK && caps) {
++            accel = caps->pVtbl->GetAccelerationType(caps);
++            caps->pVtbl->Release(caps);
++        }
++        if (res != AMF_OK || accel == AMF_ACCEL_NOT_SUPPORTED) {
++            av_log(avctx, AV_LOG_ERROR, "AMF has no hardware decoder for %ls on this device (GetCaps %d, acceleration %d)\n",
++                   codec_id, res, accel);
++            // never initialized, so Release without Terminate
++            ctx->decoder->pVtbl->Release(ctx->decoder);
++            ctx->decoder = NULL;
++            return AVERROR(ENOSYS);
++        }
++    }
++
+     // Color Metadata
+     /// Color Range (Support for older Drivers)
+     if (avctx->color_range == AVCOL_RANGE_JPEG) {
+@@ -718,3 +746,5 @@ DEFINE_AMF_DECODER(h264, H264, "h264_mp4toannexb")
+ DEFINE_AMF_DECODER(hevc, HEVC, NULL)
+ DEFINE_AMF_DECODER(vp9, VP9, NULL)
+ DEFINE_AMF_DECODER(av1, AV1, NULL)
++DEFINE_AMF_DECODER(mpeg2, MPEG2VIDEO, NULL)
++DEFINE_AMF_DECODER(vc1, VC1, NULL)

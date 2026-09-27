@@ -1,0 +1,128 @@
+id: amf-mpeg2-vc1-decoders
+patch: 0011-lavc-amfdec-add-mpeg2_amf-and-vc1_amf-decoders.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  commits: []
+  # Not reported. amfdec.c in FFmpeg master (2026-09-16) still wraps only the
+  # H.264, HEVC, VP9 and AV1 components even though the AMF SDK has exposed
+  # AMFVideoDecoderUVD_MPEG2 and AMFVideoDecoderUVD_VC1 since 1.4. MPEG-2 is
+  # verified on real hardware; VC-1 decodes correctly but its timestamps are
+  # unusable on MKV sources (see notes), so only the MPEG-2 half is upstreamable
+  # as is.
+dependencies: []
+platforms:
+  - windows-amf               # amfdec.c is built wherever --enable-amf is, so
+  - linux-amf                 # the Linux amdgpu-pro runtime is in scope too
+reproducer: tests/amf-mpeg2-decoder.sh
+samples: []                   # synthetic MPEG-2 from lavfi; VC-1 needs VC1_SAMPLE (see notes)
+failure_without_patch:
+  - "'mpeg2_amf' and 'vc1_amf' are absent from ffmpeg -decoders"
+  - "-hwaccel amf on an mpeg2video input decodes in SOFTWARE with no warning: the
+     verbose log never prints \"Selecting decoder 'mpeg2_amf'\" and vpp_amf uploads
+     the system frames itself, so the run succeeds and looks accelerated"
+  - "reproducer case decoder-listed fails, and mpeg2-progressive / mpeg2-interlaced
+     fail on the missing decoder selection line; exit 1"
+success_with_patch:
+  - "ffmpeg -decoders lists mpeg2_amf and vc1_amf"
+  - "-hwaccel amf on mpeg2video logs \"Selecting decoder 'mpeg2_amf'\" and decodes
+     every frame on the device; reproducer exits 0"
+  - "on an AMD adapter without MPEG-2 hardware the decoder init fails with
+     'AMF has no hardware decoder for AMFVideoDecoderUVD_MPEG2 on this device'
+     (rc=1) instead of crashing; reproducer case unsupported-gpu passes"
+notes:
+  - "MECHANISM: -hwaccel amf works by swapping the native decoder for the
+     <codec>_amf wrapper (ffmpeg_dec.c), so a codec without a wrapper silently
+     stays in software. amfdec.c is codec-agnostic apart from the switch that maps
+     AVCodecID to an AMF component id and the DEFINE_AMF_DECODER list; the patch
+     adds MPEG2VIDEO -> AMFVideoDecoderUVD_MPEG2 and VC1 -> AMFVideoDecoderUVD_VC1
+     to both, plus the usual configure/allcodecs/Makefile registration."
+  - "HARDWARE SUPPORT IS PER GPU, not per driver. Measured with the AMF SDK caps
+     query (ErsatzTV next, probe_capabilities amf --adapter N) on runtime 1.4.37:
+       RX 6600M (RDNA2, VCN 3.0):   MPEG2 hardware NV12 <= 1920x1080,
+                                    VC1 hardware NV12 <= 1920x1080
+       Radeon 680M (Rembrandt APU): MPEG2 and VC1 GetCaps fail (no such hardware)
+     AMD dropped MPEG-2/VC-1 decode from the newer VCN blocks, so RDNA3 and later
+     will match the 680M. The ErsatzTV probe only advertises the decoder when the
+     component reports caps, and only when ffmpeg -decoders lists <codec>_amf, so
+     an unpatched or unsupported build falls back to software decode by design."
+  - "UNSUPPORTED-GPU CRASH (found on the g6a8e4827 build, guarded since): on the
+     680M the runtime still CREATES the MPEG-2 and VC-1 components and Init()
+     succeeds, then the first SubmitInput() returns AMF_NOT_SUPPORTED (10) and
+     ffmpeg segfaults on the way out (rc 139). Both codecs behave the same. There
+     is no software fallback once -hwaccel amf has selected the wrapper, so the
+     patch now calls GetCaps() right after CreateComponent() for the two new
+     codecs and fails init with ENOSYS when the caps are missing or report
+     AMF_ACCEL_NOT_SUPPORTED. That mirrors the check the ErsatzTV probe uses to
+     decide support in the first place. The guard is deliberately limited to
+     MPEG-2 and VC-1 so stock codec behaviour is unchanged."
+  - "INTERLACED MPEG-2 (most broadcast/DVD sources) should be downloaded right
+     after decode, the same workaround ErsatzTV applies to interlaced H.264 on AMF:
+     the decoder stamps field-pair surfaces and h264_amf then switches into an
+     interlaced scan mode that stalls. The reproducer's mpeg2-interlaced case uses
+     hwdownload + bwdif for that reason; do not 'fix' it to stay on the device."
+  - "VC-1 TIMESTAMPS ARE BROKEN ON MKV SOURCES, pictures are fine. Verified on a
+     1080p Advanced Profile Blu-ray rip (vc1.mkv, 720 frames): vc1_amf decodes all
+     720 frames, in display order, bit-exact against the native decoder for I/P
+     pictures and 46-57 dB PSNR on B pictures (hardware rounding in bidirectional
+     prediction, invisible). But the output pts come out as 0, 83, 42, 167, 125,
+     ... i.e. pairs swapped (279 backwards steps in 720 frames). Cause: the AMF
+     runtime stamps every picture with the pts of the packet that carried it, and
+     MKV stores VC-1 packet timestamps in DECODE order (this file: 0, 42, 83, ...
+     monotonic while the stream has B-frames). The native vc1 decoder hides that
+     with its one-frame reorder delay (output 42, 83, 125, ...). Consequence in a
+     cfr encode (ErsatzTV passes -fps_mode cfr): 10 s of HLS from vc1_amf gives
+     dup=80 drop=81 out of 240 frames, i.e. visible judder; software decode gives
+     dup=1 drop=0. The decoder's -timestamp_mode presentation/sort/decode options
+     make NO difference (the runtime ignores them for VC-1). MPEG-2 does not have
+     this problem in any container tried (TS, MKV, VOB, MP4 all monotonic and
+     identical to software), because those muxers store real display pts.
+     ErsatzTV next therefore does not select vc1_amf at all (see amf_decoder() in
+     ffpipeline accel/amf.rs); the wrapper stays in the patch as an opt-in for
+     manual use and as the base for a fix. Candidate fix, unbuilt: for VC-1 keep a
+     FIFO of submitted packet pts in amfdec.c and assign them to output frames in
+     order, which reproduces the native decoder's delay-1 behaviour; it must
+     account for the runtime's own output delay (decoder_mode) to stay aligned."
+  - "WMV3 (Simple/Main profile in .wmv) is NOT covered: the SDK's separate WMV3
+     component reports 'not supported' on both GPUs above, and the patch maps only
+     AV_CODEC_ID_VC1."
+  - "No bitstream filter is attached to either decoder. MPEG-2 packets are already
+     an elementary stream; extradata (MP4/MKV sequence header) goes through the
+     existing AMF_VIDEO_DECODER_EXTRADATA path. The MKV VC-1 sample (start-coded
+     Advanced Profile) initialised and decoded without one."
+  - "MPEG-1 is not mapped. The DXVA MPEG2and1 profile suggests the hardware could
+     take it, but the AMF component id says MPEG2 and nothing here verifies MPEG-1."
+last_verified:
+  version: n8.1.2
+  date: 2026-09-16
+  builds:
+    without_patch: n8.1.2-20260907-etv-g14f231eb
+    with_patch:    n8.1.2-20260916-etv-g6a8e4827   # decoder mapping only; the
+                                                   # GetCaps guard is NOT in this
+                                                   # build, rebuild and re-run
+                                                   # unsupported-gpu to confirm
+  how: >-
+    Reproducer on the RX 6600M (INIT_HW_DEVICE="-init_hw_device d3d11va=dx:1
+    -init_hw_device amf=hw@dx"): decoder-listed, mpeg2-progressive and
+    mpeg2-interlaced all pass, 60/60 frames each, exit 0. MPEG-2 decode
+    correctness checked against the native mpeg2video decoder on 3 s testsrc2
+    clips encoded with B-frames (-bf 2 -g 15): 90 frames out of both decoders,
+    per-frame PSNR of mpeg2_amf vs software is min 69.98 / avg 71.88 dB for
+    progressive and min 48.00 / avg 59.11 dB for interlaced (tff); output pts
+    monotonic and identical to software from TS, MKV, VOB and MP4 containers.
+    ErsatzTV next's AMF integration tests (deinterlace group, 22 cases incl. the
+    new 480i_mpeg2.ts fixture) pass with ETV_TEST_FFMPEG pointed at this build,
+    and the generated command for the MPEG-2 case carries -hwaccel amf on
+    d3d11va=dx:1 followed by hwdownload. VC-1 (VC1_SAMPLE=vc1.mkv, 1080p Advanced
+    Profile, 720 frames): vc1 case passes the decode check (vc1_amf selected,
+    720/720 frames, pictures correct as described in notes) but the vc1-timestamps
+    check fails with 112 backwards pts steps in the first 240 frames; a 10 s HLS
+    encode shows dup=80 drop=81. On the 680M (dx:0) and on the runtime-default
+    device the same build segfaults after "SubmitInput() returned error 10" for
+    both MPEG-2 and VC-1 (rc 139), which is what prompted the GetCaps guard; the
+    guard itself has not been built yet. Stock 8.1.2 (g14f231eb): decoder-listed
+    fails, both mpeg2 cases fail on the missing decoder selection line, exit 1.
+remove_when: >-
+  Upstream amfdec.c registers mpeg2_amf (and vc1_amf) itself, i.e. the
+  decoder-listed case passes on a stock build of the pinned version.

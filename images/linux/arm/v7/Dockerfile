@@ -6,10 +6,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS devel-base
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4"
 
-ENV AOM=v3.12.0 \
-    FDKAAC=2.0.3 \
-    FFMPEG_HARD=8.1.2 \
-    FONTCONFIG=2.16.0 \
+ENV FONTCONFIG=2.16.0 \
     FREETYPE=2.13.3 \
     FRIBIDI=1.0.16 \
     KVAZAAR=2.3.1 \
@@ -76,25 +73,6 @@ RUN apt-get -yqq update && \
     apt-get autoremove -y && \
     apt-get clean -y
 
-# aom
-RUN mkdir -p /tmp/aom && \
-    git clone \
-    --branch ${AOM} \
-    --depth 1 https://aomedia.googlesource.com/aom \
-    /tmp/aom
-RUN cd /tmp/aom && \
-    rm -rf \
-    CMakeCache.txt \
-    CMakeFiles && \
-    mkdir -p \
-    aom_build && \
-    cd aom_build && \
-    cmake \
-    -DAOM_TARGET_CPU=generic \
-    -DBUILD_STATIC_LIBS=0 .. && \
-    make && \
-    make install
-
 # dav1d
 RUN mkdir -p /tmp/dav1d && \
     git clone \
@@ -105,19 +83,6 @@ RUN mkdir /tmp/dav1d/build && cd /tmp/dav1d/build && \
     meson setup -Denable_tools=false -Denable_tests=false --libdir /usr/local/lib .. && \
     ninja && \
     ninja install
-
-# fdk-aac
-RUN mkdir -p /tmp/fdk-aac && \
-    curl -Lf \
-    https://github.com/mstorsjo/fdk-aac/archive/v${FDKAAC}.tar.gz | \
-    tar -zx --strip-components=1 -C /tmp/fdk-aac
-RUN cd /tmp/fdk-aac && \
-    autoreconf -fiv && \
-    ./configure \
-    --disable-static \
-    --enable-shared && \
-    make && \
-    make install
 
 # freetype
 RUN mkdir -p /tmp/freetype && \
@@ -390,24 +355,25 @@ RUN cd /tmp/xvid/build/generic && \
     make && \
     make install
 
-# ffmpeg
-COPY patches/ /tmp/ffmpeg-patches/
-RUN if [ -z ${FFMPEG_VERSION+x} ]; then \
-    FFMPEG=${FFMPEG_HARD}; \
-    else \
-    FFMPEG=${FFMPEG_VERSION}; \
-    fi && \
+# ffmpeg (version inputs come from release.json via scripts/release-vars.sh)
+ARG FFMPEG_VERSION
+ARG FFMPEG_SHA256
+COPY patches/*.patch /tmp/ffmpeg-patches/
+RUN : "${FFMPEG_VERSION:?build arg required}" "${FFMPEG_SHA256:?build arg required}" && \
     mkdir -p /tmp/ffmpeg && \
-    echo "https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2" && \
-    curl -Lf \
-    https://ffmpeg.org/releases/ffmpeg-${FFMPEG}.tar.bz2 | \
-    tar -jx --strip-components=1 -C /tmp/ffmpeg && \
+    curl -Lf -o /tmp/ffmpeg.tar.bz2 \
+    https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 && \
+    echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.bz2" | sha256sum -c - && \
+    tar -jx --strip-components=1 -C /tmp/ffmpeg -f /tmp/ffmpeg.tar.bz2 && \
+    rm /tmp/ffmpeg.tar.bz2 && \
     for p in /tmp/ffmpeg-patches/*.patch; do \
     [ -e "$p" ] || continue; \
     echo "Applying FFmpeg patch: $p"; \
-    patch -d /tmp/ffmpeg -p1 < "$p" || exit 1; \
+    git -C /tmp/ffmpeg apply --verbose "$p" || exit 1; \
     done
-RUN cd /tmp/ffmpeg && \
+ARG FFMPEG_EXTRA_VERSION
+RUN : "${FFMPEG_EXTRA_VERSION:?build arg required}" && \
+    cd /tmp/ffmpeg && \
     ./configure \
     --disable-debug \
     --disable-doc \
@@ -415,10 +381,8 @@ RUN cd /tmp/ffmpeg && \
     --enable-ffprobe \
     --enable-fontconfig \
     --enable-gpl \
-    --enable-libaom \
     --enable-libdav1d \
     --enable-libass \
-    --enable-libfdk_aac \
     --enable-libfreetype \
     --enable-libharfbuzz \
     --enable-libkvazaar \
@@ -438,12 +402,11 @@ RUN cd /tmp/ffmpeg && \
     --enable-libx264 \
     --enable-libx265 \
     --enable-libxvid \
-    --enable-nonfree \
     --enable-openssl \
     --enable-small \
     --enable-stripping \
     --enable-version3 \
-    --extra-version=etv-g14f231eb \
+    --extra-version=${FFMPEG_EXTRA_VERSION} \
     --extra-libs=-ldl \
     --extra-libs=-lpthread && \
     make
@@ -475,6 +438,11 @@ COPY --from=devel-base /buildout/ /
 RUN apt-get update && \
     apt-get install -y libicu-dev tzdata fontconfig fonts-noto-core fonts-noto-cjk libgdiplus libdrm2 && \
     rm -rf /var/lib/apt/lists/*
+
+ARG FFMPEG_VERSION
+ARG FFMPEG_EXTRA_VERSION
+RUN --mount=type=bind,source=scripts/verify-ffmpeg.sh,target=/tmp/verify-ffmpeg.sh \
+    sh /tmp/verify-ffmpeg.sh /usr/local/bin "${FFMPEG_VERSION}" "${FFMPEG_EXTRA_VERSION}"
 
 CMD         ["--help"]
 ENTRYPOINT  ["ffmpeg"]

@@ -1,0 +1,78 @@
+id: avfilter-requested-hw-frame-size
+patch: 0001-avfilter-video-honor-requested-size-for-hw-frames.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: https://trac.ffmpeg.org/ticket/11674   # "Cuda outputs green line and
+                                                # incorrect resolution", open as
+                                                # of 2026-08-19
+  commits:
+    # These fix the SOFTWARE POOL half only, and are in n9.0 (not in n8.1.2).
+    - 083a014746  # avfilter/framepool: add ff_frame_pool_*_reinit() helpers
+    - ad7956d5bb  # avfilter/{audio,video}: switch to ff_frame_pool_*_reinit()
+    - a0510f7f72  # avfilter/framepool: update frame dimensions on reinit
+                  # (2026-03-24) - the actual fix: a reused pool now restamps
+                  # the requested width/height onto the frame.
+  # The HARDWARE half is unfixed in master as of N-124254-g397c7c7524:
+  # ff_default_get_video_buffer2() still returns av_hwframe_get_buffer()'s frame
+  # untouched, at the frames context's padded surface size.
+dependencies: []
+platforms:
+  - linux-cuda                # green line + 1088-line output (overlay_cuda)
+  - linux-vaapi               # hwupload -22 / 1088-line output (sw overlay)
+  - windows-d3d11va           # same class; not covered by the reproducer
+  - windows-qsv               # same class; not covered by the reproducer
+reproducer: tests/avfilter-requested-hw-frame-size.sh
+samples:
+  - path: samples/h264-1920x1080-coded-1088.mkv
+    sha256: "60fc64179c722f2a80f03ccec185a52223b93672fb26079231e7c84461cf25f6"
+    # Synthetic 2s testsrc2, h264 High 8-bit, display 1920x1080 / coded
+    # 1920x1088. The 16-alignment is the whole point: 1080p VP9/AV1 (8-aligned)
+    # and 720p h264 do not reproduce.
+  - path: samples/overlay-320x180.jpg
+    sha256: "11e16bbd9f38cbda4fce1a33a841748ad803390d457b78ecac8f7e70ad5adb75"
+    # Stand-in for the watermark/subtitle image ErsatzTV burns in; any second
+    # video input that makes overlay blend in place will do.
+failure_without_patch:
+  - "vaapi-sw-pool: filtergraph output link becomes 1920x1088 (SAR/DAR mangled to 30:17)"
+  - "vaapi-hwupload: [hwupload] Failed to upload frame: -22, ffmpeg exits 234"
+  - "cuda-hw-frames: 1088-line output with 8 uninitialized rows at the bottom (green line)"
+success_with_patch:
+  - "all three cases keep the output at 1920x1080"
+notes:
+  - "TWO INDEPENDENT HALVES, fixed independently upstream. Read the reproducer's
+     result accordingly - green on the two vaapi cases alone does NOT mean the
+     patch can be dropped."
+  - "SOFTWARE POOL half: hwdownload requests hwframes->width/height, so the
+     downstream link's pool is created at 1088; overlay then blends in place and
+     gets 1088 back. Fixed upstream by a0510f7f72, present in n9.0."
+  - "HARDWARE half: av_hwframe_get_buffer() stamps the frames context's padded
+     surface size onto the frame and never writes the rows between the logical
+     and padded height. Still unfixed in master. overlay_cuda is the only filter
+     in reach that calls ff_inlink_make_frame_writable() on a hardware link, so
+     a CUDA host is required to test it - VAAPI has no in-place filter that
+     exercises this path, and the case self-skips without CUDA."
+  - "Seeking hides the bug: -ss 00:00:0.01 makes every case pass on an unpatched
+     build, because the pool is then created by a different request. No case may
+     use -ss, and a green run that used one proves nothing."
+  - "On a rebase to 9.x this patch will not apply: video.c was refactored to
+     ff_frame_pool_video_reinit(). The replacement only needs the hardware half -
+     clamp the frame to w/h after av_hwframe_get_buffer()."
+last_verified:
+  version: n8.1.2, n9.0, master N-124254-g397c7c7524
+  date: 2026-08-19
+  builds:
+    without_patch: n8.1.2-20260722                 # stock BtbN 8.1.2
+    with_patch:    n8.1.2-20260819-etv-g3c0520f9
+  how: >-
+    Reproducer on this host (Intel iHD 26.2.4, VAAPI only, no CUDA):
+    stock n8.1.2 fails both vaapi cases (1920x1088, and hwupload -22 / exit 234);
+    the etv build, master-20260429 and Arch n9.0 all pass both at 1920x1080.
+    cuda-hw-frames skipped everywhere for lack of a CUDA device.
+    The hardware half was verified by source instead: n9.0's and master's
+    ff_default_get_video_buffer2() still `return frame;` straight out of
+    av_hwframe_get_buffer() with no clamp to the requested size.
+remove_when: >-
+  cuda-hw-frames passes on an unpatched build on a CUDA host. The vaapi cases
+  passing only retires the software-pool half, which upstream already fixed in
+  9.0; the hardware half is what keeps this patch alive.

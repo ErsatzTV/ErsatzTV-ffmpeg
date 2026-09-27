@@ -1,0 +1,171 @@
+name: CI
+
+# Builds and tests every docker image and native target without publishing
+# anything; releases come only from release.yml on a tag push.
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    if: contains(github.event.head_commit.message, '[no build]') == false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # full submodule history: the lock check needs fork_commit as an ancestor
+      - name: Fetch native toolchain
+        run: git submodule update --init
+
+      - name: Check native dependency lock
+        run: sh scripts/check-native-lock.sh
+
+      - name: Check upstream and patch stack
+        run: sh scripts/check-upstream.sh "$RUNNER_TEMP/upstream"
+
+  docker:
+    name: Docker (${{ matrix.name }})
+    needs: preflight
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: amd64
+            platform: linux/amd64
+            os: ubuntu-latest
+            test: true
+          - name: arm64
+            platform: linux/arm64
+            os: ubuntu-24.04-arm
+            test: true
+          # emulated, so the readrate timing test isn't meaningful here
+          - name: arm32v7
+            platform: linux/arm/v7
+            os: ubuntu-latest
+            test: false
+    steps:
+      - name: Clean tools folder
+        run: cd /opt && find . -maxdepth 1 -mindepth 1 '!' -path ./containerd '!' -path ./actionarchivecache '!' -path ./runner '!' -path ./runner-cache -exec rm -rf '{}' ';'
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Release variables
+        run: sh scripts/release-vars.sh "$COMMIT" dev >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # verify-ffmpeg.sh runs as the last Dockerfile step
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./images/${{ matrix.platform }}/Dockerfile
+          cache-from: type=gha,scope=docker-${{ matrix.name }}
+          cache-to: type=gha,scope=docker-${{ matrix.name }},mode=max,ignore-error=true
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            FFMPEG_VERSION=${{ env.FFMPEG_VERSION }}
+            FFMPEG_SHA256=${{ env.FFMPEG_SHA256 }}
+            FFMPEG_EXTRA_VERSION=${{ env.FFMPEG_EXTRA_VERSION }}
+          push: false
+          load: ${{ matrix.test }}
+          tags: ersatztv-ffmpeg:ci
+
+      - name: Readrate regression
+        if: matrix.test
+        run: |
+          docker run --rm --entrypoint bash -v "$PWD/patches:/patches:ro" ersatztv-ffmpeg:ci \
+            /patches/tests/readrate-sparse-stream-stall.sh /usr/local/bin/ffmpeg
+
+  native:
+    name: Native build (${{ matrix.target }})
+    needs: preflight
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux64, linuxarm64, win64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+
+      - name: Free disk space
+        run: native/FFmpeg-Builds/util/free_disk_space.sh
+
+      # the fork's release mode, so CI takes the same checked path as release.yml
+      - name: Build
+        run: sh scripts/build-native.sh ${{ matrix.target }} "$COMMIT" dev
+
+      - name: Upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-${{ matrix.target }}
+          path: native/FFmpeg-Builds/artifacts/ffmpeg-*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  native-test:
+    name: Native test (${{ matrix.target }})
+    needs: native
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux64
+            os: ubuntu-latest
+            readrate: true
+          - target: linuxarm64
+            os: ubuntu-24.04-arm
+            readrate: true
+          - target: win64
+            os: windows-latest
+            readrate: false
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Release variables
+        run: sh scripts/release-vars.sh "$COMMIT" dev >> "$GITHUB_ENV"
+
+      - name: Download
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-${{ matrix.target }}
+          path: dist
+
+      - name: Check package
+        run: |
+          set -- dist/ffmpeg-*
+          [ $# -eq 1 ] || { echo "::error::expected one archive, got: $*"; exit 1; }
+          sh scripts/check-native-package.sh "$1" "$TARGET" "$FFMPEG_VERSION" "$FFMPEG_EXTRA_VERSION" pkg
+
+      - name: Readrate regression
+        if: matrix.readrate
+        run: patches/tests/readrate-sparse-stream-stall.sh "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"

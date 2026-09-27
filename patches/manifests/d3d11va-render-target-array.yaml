@@ -1,0 +1,78 @@
+id: d3d11va-render-target-array
+patch: 0003-avutil-hwcontext_d3d11va-restore-render-target-array-restriction.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Regression from efd484cb2d (2025-09-09), "avutil/hwcontext_d3d11va: remove
+  # D3D11_BIND_RENDER_TARGET restriction for array textures". Present in n8.1.2
+  # and still in master as of 2026-08-20.
+  #
+  # The restriction it removed was added by 4f78711f9c (2021-08-20, Artem Galin,
+  # Intel): "There is no way to allocate array of textures with
+  # D3D11_BIND_RENDER_TARGET flag and .ArraySize > 2 by ID3D11Device_CreateTexture2D
+  # due to the Microsoft limitation."
+  #
+  # efd484cb2d's rationale was "I was unable to find any documentation or other
+  # references on that, and a quick test also found it to not be the case." It
+  # does reproduce here: CreateTexture2D returns E_INVALIDARG (0x80070057) on
+  # Intel UHD (TGL) and Arc (DG2). Not reported upstream.
+  commits: []
+dependencies: []
+platforms:
+  - windows-qsv               # hwcontext_d3d11va is Windows-only, and QSV is the
+                              # only thing in the ErsatzTV pipeline that asks for a
+                              # RENDER_TARGET pool. Linux QSV uses a VAAPI child
+                              # and never reaches this file.
+reproducer: tests/d3d11va-render-target-pool.sh   # case render-target-array
+samples: []                   # synthetic lavfi source; the bug is in pool
+                              # construction, not decoding
+failure_without_patch:
+  - "[AVHWFramesContext] Could not create the texture (80070057)"
+  - "[AVHWFramesContext] Error creating an internal frame pool"
+  - "[Parsed_hwupload_N] Failed to configure output pad, filter graph never configures"
+success_with_patch:
+  - "pool of 64 surfaces built and encoded; per-frame single textures are used instead of an array"
+notes:
+  - "REACHED VIA qsv_get_d3d11va_bind_flags() (hwcontext_qsv.c:229), which maps
+     every QSV pool that is not a decoder target to D3D11_BIND_RENDER_TARGET:
+     hwupload's MFX_MEMTYPE_VIDEO_MEMORY_PROCESSOR_TARGET and vpp_qsv's
+     MFX_MEMTYPE_FROM_VPPOUT both land there. Decoder pools get
+     D3D11_BIND_DECODER and are unaffected."
+  - "NOT A PURE BUGFIX - it is a trade-off. Restoring the restriction re-breaks
+     what efd484cb2d was written to enable: vsrc_ddagrab (vsrc_ddagrab.c:843) and
+     vf_scale_d3d11 (vf_scale_d3d11.c:389) also set D3D11_BIND_RENDER_TARGET, and
+     they want the array texture so their frames can be fed to a hardware encoder.
+     This patch sends them back to per-frame single textures. That is free for
+     ErsatzTV, which uses neither, but it is why the patch cannot go upstream as
+     written. The upstream-acceptable shape is to attempt the array texture and
+     fall back to d3d11va_alloc_single() when CreateTexture2D fails, rather than
+     deciding from BindFlags up front."
+  - "COVERAGE: as of 2026-08-20 ErsatzTV's own pipeline no longer passes
+     extra_hw_frames on QSV hwupload, so its hwupload pools are dynamic
+     (initial_pool_size 0) and never reach this code. What still reaches it on a
+     stock build is vpp_qsv on a legacy MSDK runtime: qsvvpp.c:641 falls back to
+     initial_pool_size 64 when the runtime is older than oneVPL 2.9, and libvpl's
+     dispatcher does load libmfxhw64.dll on older Intel iGPUs. QSV_ONEVPL in
+     hwcontext_qsv.c is a compile-time flag, so such a build still defaults its
+     child device to d3d11va. That path cannot be exercised on a TGL/Arc host -
+     hence the reproducer, which forces the pool with extra_hw_frames instead."
+last_verified:
+  version: n8.1.2
+  date: 2026-08-20
+  builds:
+    without_patch: n8.1.2-29-g703dcc25b9-20260721      # stock BtbN 8.1.2
+    with_patch:    n8.1.2-20260819-etv-g3c0520f9
+  how: >-
+    Reproducer on Intel UHD Graphics (TGL, device 8086:9a60), oneVPL runtime 2.15,
+    child device d3d11va. Stock: both cases FAIL at CreateTexture2D with
+    E_INVALIDARG, script exits 1. etv build: both cases PASS, script exits 0.
+    The render-target-array case also passes on a 0003-only build
+    (n8.1.2-20260820-etv-gebbbcbe9-dirty), confirming it isolates this patch and
+    is not influenced by 0004.
+remove_when: >-
+  The render-target-array case passes on an unpatched build - i.e. upstream either
+  restores the restriction, adds the CreateTexture2D fallback described in the
+  notes, or stops mapping QSV VPP/processor pools to D3D11_BIND_RENDER_TARGET.
+  Note that dropping this patch also requires dropping d3d11va-pool-size-clamp
+  (0004), whose diff context includes the else-if line this patch introduces.

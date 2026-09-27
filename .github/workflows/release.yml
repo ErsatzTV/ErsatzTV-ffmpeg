@@ -1,0 +1,372 @@
+name: Release
+
+# A pushed 8.1.2-N tag builds, tests and publishes that revision as an
+# immutable prerelease. Promotion to :8.1.2/:latest and GitHub "latest" is a
+# separate, manual step (README). Published bytes are never rebuilt: a changed
+# build is a new revision.
+on:
+  push:
+    tags:
+      - '[0-9]*.[0-9]*.[0-9]*-[0-9]*'
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/ersatztv/ersatztv-ffmpeg
+
+jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # full submodule history: the lock check needs fork_commit as an ancestor
+      - name: Fetch native toolchain
+        run: git submodule update --init
+
+      - name: Release variables
+        run: sh scripts/release-vars.sh "$GITHUB_SHA" release >> "$GITHUB_ENV"
+
+      - name: Check release inputs
+        run: |
+          [ "$GITHUB_REF_NAME" = "$RELEASE_TAG" ] ||
+            { echo "::error::tag $GITHUB_REF_NAME does not match release.json ($RELEASE_TAG)"; exit 1; }
+          [ -z "$(git status --porcelain --ignore-submodules=none)" ] ||
+            { echo "::error::dirty checkout"; git status; exit 1; }
+          [ -f "release-notes/$RELEASE_TAG.md" ] ||
+            { echo "::error::missing release-notes/$RELEASE_TAG.md"; exit 1; }
+
+      - name: Check native dependency lock
+        run: sh scripts/check-native-lock.sh
+
+      - name: Check upstream and patch stack
+        run: sh scripts/check-upstream.sh "$RUNNER_TEMP/upstream"
+
+      # a fresh run would rebuild into different bytes; only a rerun of the
+      # original run's failed publish job may continue a partial publication
+      - name: Check nothing is published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::release $RELEASE_TAG is already published"; exit 1
+          fi
+          if docker buildx imagetools inspect "$IMAGE_NAME:$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::$IMAGE_NAME:$RELEASE_TAG exists; rerun the original run's publish job or abandon this revision"; exit 1
+          fi
+
+  docker:
+    name: Docker (${{ matrix.name }})
+    needs: preflight
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: amd64
+            platform: linux/amd64
+            os: ubuntu-latest
+            test: true
+          - name: arm64
+            platform: linux/arm64
+            os: ubuntu-24.04-arm
+            test: true
+          # emulated, so the readrate timing test isn't meaningful here
+          - name: arm32v7
+            platform: linux/arm/v7
+            os: ubuntu-latest
+            test: false
+    steps:
+      - name: Clean tools folder
+        run: cd /opt && find . -maxdepth 1 -mindepth 1 '!' -path ./containerd '!' -path ./actionarchivecache '!' -path ./runner '!' -path ./runner-cache -exec rm -rf '{}' ';'
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Release variables
+        run: |
+          sh scripts/release-vars.sh "$GITHUB_SHA" release >> "$GITHUB_ENV"
+          platform=${{ matrix.platform }}
+          echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
+
+      - name: Login to container registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # read-only cache: tag runs can only restore main's entries, never a PR's.
+      # buildx provenance is off so the index holds exactly the platform
+      # manifests; provenance comes from attest-build-provenance instead.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./images/${{ matrix.platform }}/Dockerfile
+          cache-from: type=gha,scope=docker-${{ matrix.name }}
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          build-args: |
+            FFMPEG_VERSION=${{ env.FFMPEG_VERSION }}
+            FFMPEG_SHA256=${{ env.FFMPEG_SHA256 }}
+            FFMPEG_EXTRA_VERSION=${{ env.FFMPEG_EXTRA_VERSION }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.RELEASE_TAG }}
+            org.opencontainers.image.licenses=GPL-3.0-or-later
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Readrate regression
+        if: matrix.test
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker run --rm --entrypoint bash -v "$PWD/patches:/patches:ro" "$IMAGE_NAME@$DIGEST" \
+            /patches/tests/readrate-sparse-stream-stall.sh /usr/local/bin/ffmpeg
+
+      - name: Attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 30
+
+  native:
+    name: Native build (${{ matrix.target }})
+    needs: preflight
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        target: [linux64, linuxarm64, win64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Free disk space
+        run: native/FFmpeg-Builds/util/free_disk_space.sh
+
+      - name: Build
+        run: sh scripts/build-native.sh ${{ matrix.target }} "$GITHUB_SHA" release
+
+      - name: Upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-${{ matrix.target }}
+          path: native/FFmpeg-Builds/artifacts/ffmpeg-*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  native-test:
+    name: Native test (${{ matrix.target }})
+    needs: native
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: linux64
+            os: ubuntu-latest
+            readrate: true
+          - target: linuxarm64
+            os: ubuntu-24.04-arm
+            readrate: true
+          - target: win64
+            os: windows-latest
+            readrate: false
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Release variables
+        run: sh scripts/release-vars.sh "$GITHUB_SHA" release >> "$GITHUB_ENV"
+
+      - name: Download
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-${{ matrix.target }}
+          path: dist
+
+      - name: Check package
+        run: |
+          set -- dist/ffmpeg-*
+          [ $# -eq 1 ] || { echo "::error::expected one archive, got: $*"; exit 1; }
+          sh scripts/check-native-package.sh "$1" "$TARGET" "$FFMPEG_VERSION" "$FFMPEG_EXTRA_VERSION" pkg
+
+      - name: Readrate regression
+        if: matrix.readrate
+        run: patches/tests/readrate-sparse-stream-stall.sh "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
+
+  publish:
+    name: Publish prerelease
+    needs: [docker, native-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch native toolchain
+        run: git submodule update --init
+
+      - name: Release variables
+        run: sh scripts/release-vars.sh "$GITHUB_SHA" release >> "$GITHUB_ENV"
+
+      - name: Download native builds
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: native-*
+          merge-multiple: true
+          path: dist
+
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: digests-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+
+      - name: Login to container registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # A tag left by a partial publication is reused only if it holds exactly
+      # these platform images; the fixed tag is never moved.
+      - name: Create fixed tag
+        id: index
+        run: |
+          set --
+          for f in "$RUNNER_TEMP"/digests/*; do set -- "$@" "$IMAGE_NAME@sha256:${f##*/}"; done
+          [ $# -eq 3 ] || { echo "::error::expected 3 platform digests, got $#"; exit 1; }
+          want=$(printf '%s\n' "$@" | sed 's/.*@//' | sort)
+          if ! docker buildx imagetools inspect "$IMAGE_NAME:$RELEASE_TAG" >/dev/null 2>&1; then
+            docker buildx imagetools create -t "$IMAGE_NAME:$RELEASE_TAG" "$@"
+          fi
+          have=$(docker buildx imagetools inspect --raw "$IMAGE_NAME:$RELEASE_TAG" | jq -r '.manifests[].digest' | sort)
+          [ "$have" = "$want" ] || { echo "::error::$IMAGE_NAME:$RELEASE_TAG holds other images:"; echo "$have"; exit 1; }
+          digest=$(docker buildx imagetools inspect "$IMAGE_NAME:$RELEASE_TAG" --format '{{json .Manifest}}' | jq -er .digest)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "### \`$IMAGE_NAME:$RELEASE_TAG@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attest index
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.index.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Assemble assets
+        run: |
+          mkdir assets
+          for t in linux64 linuxarm64 win64; do
+            ext=tar.xz; [ "$t" = win64 ] && ext=zip
+            f="dist/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$t-gpl-8.1.$ext"
+            [ -f "$f" ] || { echo "::error::missing $f"; ls dist; exit 1; }
+            cp "$f" assets/
+          done
+          set -- dist/*
+          [ $# -eq 3 ] || { echo "::error::unexpected native artifacts: $*"; exit 1; }
+
+          sh scripts/check-upstream.sh "$RUNNER_TEMP/upstream"
+          cp "$RUNNER_TEMP/upstream/ffmpeg-$FFMPEG_VERSION.tar.bz2" assets/
+
+          src="ersatztv-ffmpeg-$RELEASE_TAG-src"
+          git archive --prefix="$src/" -o "$RUNNER_TEMP/src.tar" "$GITHUB_SHA"
+          git -C native/FFmpeg-Builds archive --prefix="$src/native/FFmpeg-Builds/" -o "$RUNNER_TEMP/fork.tar" HEAD
+          tar --concatenate -f "$RUNNER_TEMP/src.tar" "$RUNNER_TEMP/fork.tar"
+          xz -9 -T0 -c "$RUNNER_TEMP/src.tar" > "assets/$src.tar.xz"
+
+          (cd assets && sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS")
+          mv "$RUNNER_TEMP/SHA256SUMS" assets/
+          cat assets/SHA256SUMS
+
+      - name: Attest assets
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: assets/SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INDEX_DIGEST: ${{ steps.index.outputs.digest }}
+        run: |
+          sh scripts/release-notes.sh "$INDEX_DIGEST" > "$RUNNER_TEMP/notes.md"
+
+          state=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          case "$state" in
+            none) gh release create "$RELEASE_TAG" --draft --verify-tag --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/notes.md" ;;
+            true) gh release edit "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/notes.md" ;;
+            *) echo "::error::release $RELEASE_TAG is already published"; exit 1 ;;
+          esac
+          gh release upload "$RELEASE_TAG" assets/* --clobber
+
+          verify="$RUNNER_TEMP/verify"
+          gh release download "$RELEASE_TAG" --dir "$verify"
+          diff <(cd assets && printf '%s\n' *) <(cd "$verify" && printf '%s\n' *) ||
+            { echo "::error::draft assets differ from the assembled set"; exit 1; }
+          (cd "$verify" && sha256sum -c SHA256SUMS)
+
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false

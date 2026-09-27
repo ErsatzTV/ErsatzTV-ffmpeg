@@ -1,0 +1,4 @@
+[submodule "native/FFmpeg-Builds"]
+	path = native/FFmpeg-Builds
+	url = https://github.com/ErsatzTV/FFmpeg-Builds.git
+	branch = ersatztv

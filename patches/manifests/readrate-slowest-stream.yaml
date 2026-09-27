@@ -1,0 +1,37 @@
+id: readrate-slowest-stream
+patch: 0006-ffmpeg_demux-only-throttle-readrate-on-the-slowest-stream.patch
+based_on: n8.1.2
+status: carried
+upstream:
+  issue: null
+  commits:
+    # release/8.1, landed after the n8.1.2 tag - i.e. these are in 8.1.3
+    - eb98bef9d2  # fftools/ffmpeg_demux: skip finished/unstarted streams in readrate_sleep()
+    - 9193beee0d  # fftools/ffmpeg_demux: remove unused variable
+    - dba917bab5  # fftools/ffmpeg_demux: only throttle readrate on the slowest stream
+                  # (cherry-picked from master de6bcf5c05)
+dependencies: []
+platforms:
+  - all                       # fftools demuxer logic; no platform or hwaccel involvement
+reproducer: null              # no standalone reproducer; superseded in practice by 0007
+samples: []
+failure_without_patch:
+  - "readrate_sleep() loops over every stream and calls av_usleep() per stream"
+  - "a sparse stream re-arms its catch-up anchor at a stale ds->dts, so the next
+     packet sleeps for the whole inter-packet gap and stalls video and audio"
+success_with_patch:
+  - "sleep is computed once per call, from a single stream, with per-demuxer state"
+notes:
+  - "This is a straight backport, squashed from the three release/8.1 commits above."
+  - "INCOMPLETE FIX. It corrects where the sleep is computed but not what from:
+     the slowest stream is still chosen as the minimum of ds->dts - first_dts,
+     which a sparse subtitle track always wins, so the full-gap stall survives.
+     See readrate-slowest-stream-stall (0007), which depends on this patch."
+last_verified:
+  version: n8.1.2
+  date: 2026-08-19
+  how: >-
+    Confirmed applied and active in build n8.1.2-20260813-etv-g25d21b2c: the
+    "Resumed reading" warnings show a single per-input-file lag counter rather
+    than per-stream, and attribute to whichever stream is currently slowest.
+remove_when: "The build moves to FFmpeg 8.1.3 or newer"

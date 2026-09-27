@@ -1,0 +1,34 @@
+id: liboapvenc-openapv-1.1
+patch: 0012-avcodec-liboapvenc-fix-build-with-openapv-1.1.patch
+based_on: n8.1.2
+status: carried
+upstream:
+  issue: https://github.com/homebrew-ffmpeg/homebrew-ffmpeg/issues/235
+  commits:
+    # release/8.1, landed after the n8.1.2 tag - i.e. this is in 8.1.3
+    - 0880196367  # avcodec/liboapvenc: fix build with openapv >= 1.1
+                  # (cherry-picked from master c54710db21)
+dependencies: []
+platforms:
+  - all                       # build fix; only matters where liboapv is enabled (native builds)
+reproducer: null              # build-time only
+samples: []
+failure_without_patch:
+  - "n8.1.2 fails to compile against openapv >= 1.1: oapvm_create() now takes
+     an oapvm_cdesc_t * before the error pointer"
+success_with_patch:
+  - "liboapvenc.c compiles against both the old and new openapv API
+     (guarded by OAPV_VER_APISET)"
+notes:
+  - "Straight backport; the patched file is identical to release/8.1."
+  - "BtbN covered this with a header shim in 50-openapv.sh (605cd90) and removed
+     it (54e1926) once release/8.1 carried the fix. BtbN tracks the release/8.1
+     branch head, ETV builds the n8.1.2 tag, so the fix has to come from here."
+  - "No effect on the docker images, which do not enable liboapv."
+last_verified:
+  version: n8.1.2
+  date: 2026-09-26
+  how: >-
+    Applies on n8.1.2 after 0001-0011; resulting libavcodec/liboapvenc.c is
+    identical to release/8.1. openapv a58ce739 defines OAPV_VER_APISET 1.
+remove_when: "The build moves to FFmpeg 8.1.3 or newer"

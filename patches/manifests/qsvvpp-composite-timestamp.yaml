@@ -1,0 +1,45 @@
+id: qsvvpp-composite-timestamp
+patch: 0008-lavfi-qsvvpp-seed-output-surface-timestamp-from-the-input.patch
+based_on: n8.1.2
+status: local
+author: McKenzie Pepper (ErsatzTV/ErsatzTV-ffmpeg PR 42, taken as-is)
+upstream:
+  issue: null
+  commits: []
+  # PR 42 says the series was sent to ffmpeg-devel on 2026-07-30; nothing is
+  # visible on patchwork, the list archive or fforge as of 2026-09-07.
+  # qsvvpp.c is byte-identical between n8.1.2 and origin/master e4ed85ab73.
+dependencies: []
+platforms:
+  - linux-qsv
+  - windows-qsv
+reproducer: tests/vpp-qsv-pad.sh
+samples: []
+failure_without_patch:
+  - "any mfxExtVPPComposite user (vpp_qsv pad, overlay_qsv, xstack_qsv) gets Data.TimeStamp 0 on every output surface"
+  - "with async_depth > 0 the output pts collapses to 0 and the CFR path drops nearly every frame"
+success_with_patch:
+  - "output surface timestamp is seeded from the input before RunFrameVPPAsync; composition passes it through, other VPP operations overwrite it as before"
+  - "vpp-qsv-pad.sh nv12-center passes at vpp_qsv's default async_depth=4 with strictly increasing pts"
+notes:
+  - "Measured on Arc (iHD 26.2.4, oneVPL 2.17) with an instrumented single-stream
+     composite filter: TimeStamp came back 0 on every frame. overlay_qsv and
+     stack_qsv work around the same thing in their filter_frame callbacks."
+last_verified:
+  version: n8.1.2
+  date: 2026-09-07
+  builds:
+    without_patch: "n8.1.2-20260907-etv-g38cd5732-dirty (pad_qsv spike build; TimeStamp 0 on every composite output)"
+    with_patch:    n8.1.2-20260907-etv-g38cd5732-dirty (vpp-pad2 linux64 / win64)
+  how: >-
+    2026-09-07, tests/vpp-qsv-pad.sh 8/8 on every host, all oneVPL 2.17:
+      Arc A750, Linux, iHD 26.2.4
+      Arc A750, Windows 11, D3D11 child device (8086:56a1)
+      Arc A310, Linux, iHD 26.2.2 (runtime 2.15)
+      N100 (Alder Lake-N), Debian trixie, iHD 25.2.3
+    Windows measures borders within tolerance but not bit-exact (red V=241 vs
+    240, P010 chroma 514 vs 512); Linux is exact.
+    nv12-center runs at vpp_qsv's default async_depth=4 and reports 25 frames
+    with strictly increasing pts everywhere; the pad_qsv spike build on the
+    Linux A750 logged "output pts from vpp 0" for every frame.
+remove_when: "qsvvpp.c in the base version seeds or otherwise fixes the composite output timestamp"
