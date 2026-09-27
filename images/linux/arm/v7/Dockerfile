@@ -6,8 +6,7 @@ FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS devel-base
 ENV DEBIAN_FRONTEND="noninteractive"
 ENV MAKEFLAGS="-j4"
 
-ENV AOM=v3.12.0 \
-    FONTCONFIG=2.16.0 \
+ENV FONTCONFIG=2.16.0 \
     FREETYPE=2.13.3 \
     FRIBIDI=1.0.16 \
     KVAZAAR=2.3.1 \
@@ -73,25 +72,6 @@ RUN apt-get -yqq update && \
     zlib1g-dev && \
     apt-get autoremove -y && \
     apt-get clean -y
-
-# aom
-RUN mkdir -p /tmp/aom && \
-    git clone \
-    --branch ${AOM} \
-    --depth 1 https://aomedia.googlesource.com/aom \
-    /tmp/aom
-RUN cd /tmp/aom && \
-    rm -rf \
-    CMakeCache.txt \
-    CMakeFiles && \
-    mkdir -p \
-    aom_build && \
-    cd aom_build && \
-    cmake \
-    -DAOM_TARGET_CPU=generic \
-    -DBUILD_STATIC_LIBS=0 .. && \
-    make && \
-    make install
 
 # dav1d
 RUN mkdir -p /tmp/dav1d && \
@@ -401,7 +381,6 @@ RUN : "${FFMPEG_EXTRA_VERSION:?build arg required}" && \
     --enable-ffprobe \
     --enable-fontconfig \
     --enable-gpl \
-    --enable-libaom \
     --enable-libdav1d \
     --enable-libass \
     --enable-libfreetype \

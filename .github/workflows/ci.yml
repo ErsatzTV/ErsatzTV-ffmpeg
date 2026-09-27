@@ -78,8 +78,8 @@ jobs:
         with:
           context: .
           file: ./images/${{ matrix.platform }}/Dockerfile
-          cache-from: type=gha
-          cache-to: type=gha,mode=max,ignore-error=true
+          cache-from: type=gha,scope=docker-${{ matrix.name }}
+          cache-to: type=gha,scope=docker-${{ matrix.name }},mode=max,ignore-error=true
           platforms: ${{ matrix.platform }}
           build-args: |
             FFMPEG_VERSION=${{ env.FFMPEG_VERSION }}
