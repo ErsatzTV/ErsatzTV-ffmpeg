@@ -54,11 +54,6 @@ jobs:
             platform: linux/arm64
             os: ubuntu-24.04-arm
             test: true
-          # emulated, so the readrate timing test isn't meaningful here
-          - name: arm32v7
-            platform: linux/arm/v7
-            os: ubuntu-latest
-            test: false
     steps:
       - name: Clean tools folder
         run: cd /opt && find . -maxdepth 1 -mindepth 1 '!' -path ./containerd '!' -path ./actionarchivecache '!' -path ./runner '!' -path ./runner-cache -exec rm -rf '{}' ';'
