@@ -37,25 +37,33 @@ echo "ffmpeg:   $FFMPEG"
 echo "sample:   $sample"
 echo "measuring largest output stall over ${DURATION}s of media at -readrate 1.05 ..."
 
+# timestamps are taken in bash because mawk (the docker images' awk) block-
+# buffers piped stdin, so awk would see every progress line only at exit
+now_us() { local t=${EPOCHREALTIME//[.,]/}; echo $((10#$t)); }
+
 result=$(
     "$FFMPEG" -nostdin -hide_banner -nostats -loglevel error -progress - \
         -readrate 1.05 -i "$sample" \
         -filter_complex "[0:0][0:1]overlay[v]" -map "[v]" \
         -t "$DURATION" -c:v rawvideo -f null - 2>/dev/null \
-    | awk -v start="$(date +%s.%N)" '
-        /^out_time_(ms|us)=/ {
-            "date +%s.%N" | getline now; close("date +%s.%N")
-            split($0, kv, "=")
-            wall = now - start
-            media = kv[2] / 1000000       # both keys are microseconds
-            if (media > last_media) {
-                gap = wall - last_wall
-                if (gap > max_gap) { max_gap = gap; at = last_media }
-                last_media = media
-                last_wall  = wall
-            }
-        }
-        END { printf "%.2f %.2f\n", max_gap, at }'
+    | {
+        start=$(now_us)
+        last_media=0 last_wall=0 max_gap=0 at=0
+        # both out_time_ms and out_time_us are microseconds
+        while IFS='=' read -r key value; do
+            case "$key" in out_time_ms|out_time_us) ;; *) continue ;; esac
+            [[ "$value" =~ ^[0-9]+$ ]] || continue
+            media=$((10#$value))
+            if (( media > last_media )); then
+                wall=$(( $(now_us) - start ))
+                gap=$(( wall - last_wall ))
+                if (( gap > max_gap )); then max_gap=$gap; at=$last_media; fi
+                last_media=$media
+                last_wall=$wall
+            fi
+        done
+        awk -v g="$max_gap" -v a="$at" 'BEGIN { printf "%.2f %.2f\n", g / 1e6, a / 1e6 }'
+    }
 )
 
 stall=${result% *}
