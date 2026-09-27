@@ -389,7 +389,7 @@ RUN : "${FFMPEG_VERSION:?build arg required}" "${FFMPEG_SHA256:?build arg requir
     for p in /tmp/ffmpeg-patches/*.patch; do \
     [ -e "$p" ] || continue; \
     echo "Applying FFmpeg patch: $p"; \
-    patch -d /tmp/ffmpeg -p1 < "$p" || exit 1; \
+    git -C /tmp/ffmpeg apply --verbose "$p" || exit 1; \
     done
 ARG FFMPEG_EXTRA_VERSION
 RUN : "${FFMPEG_EXTRA_VERSION:?build arg required}" && \
