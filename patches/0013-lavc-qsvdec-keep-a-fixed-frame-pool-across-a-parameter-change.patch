@@ -1,0 +1,96 @@
+diff --git a/libavcodec/qsvdec.c b/libavcodec/qsvdec.c
+index a85c1785cf..981dbb0394 100644
+--- a/libavcodec/qsvdec.c
++++ b/libavcodec/qsvdec.c
+@@ -294,6 +294,50 @@ fail:
+     return AVERROR_EXTERNAL;
+ }
+ 
++/* A fixed pool (legacy runtimes and D3D9) is registered with every MFX
++ * session that consumes it: an encoder or vpp opened on the old pool cannot
++ * take surfaces from a new one, and fails with MFX_ERR_UNDEFINED_BEHAVIOR.
++ * When a stream parameter change leaves the pool geometry intact, keep the
++ * same pool so nothing downstream sees a new frames context. Dynamic pools
++ * (runtime 2.9+ outside D3D9) grow on demand and are replaced as before.
++ *
++ * A kept pool must still hold what a new pool would: the runtime's
++ * suggestion plus the 16 surfaces left for downstream consumers. The
++ * suggestion follows the level's maximum DPB, so a level change alone (common
++ * in spliced streams) can raise it past a pool sized for the first SPS; see
++ * qsv_fixed_pool_size() for the floor that leaves room for that. */
++static int qsv_frames_ctx_reusable(AVCodecContext *avctx, QSVContext *q,
++                                   const AVBufferRef *frames_ref)
++{
++    const AVHWFramesContext  *frames_ctx   = (const AVHWFramesContext *)frames_ref->data;
++    const AVQSVFramesContext *frames_hwctx = frames_ctx->hwctx;
++
++    if (QSV_RUNTIME_VERSION_ATLEAST(q->ver, 2, 9) && q->handle_type != MFX_HANDLE_D3D9_DEVICE_MANAGER)
++        return 0;
++
++    if (frames_ctx->device_ref->data != avctx->hw_device_ctx->data ||
++        frames_ctx->format    != AV_PIX_FMT_QSV ||
++        frames_ctx->sw_format != avctx->sw_pix_fmt ||
++        frames_ctx->width     != FFALIGN(avctx->coded_width,  32) ||
++        frames_ctx->height    != FFALIGN(avctx->coded_height, 32) ||
++        !(frames_hwctx->frame_type & MFX_MEMTYPE_VIDEO_MEMORY_DECODER_TARGET))
++        return 0;
++
++    av_log(avctx, AV_LOG_VERBOSE, "Fixed frame pool has %d surfaces; the new stream "
++           "suggests %d\n", frames_hwctx->nb_surfaces, q->suggest_pool_size);
++
++    return frames_hwctx->nb_surfaces >= q->suggest_pool_size + 16 + avctx->extra_hw_frames;
++}
++
++/* A fixed pool cannot grow, and cannot be replaced on a parameter change
++ * without breaking its consumers, so size it for the largest DPB a later SPS
++ * at the same resolution can ask for: 16 reference frames plus the one being
++ * decoded, and the async queue. */
++static int qsv_fixed_pool_size(AVCodecContext *avctx, QSVContext *q)
++{
++    return FFMAX(q->suggest_pool_size, 17 + q->async_depth) + 16 + avctx->extra_hw_frames;
++}
++
+ static int qsv_decode_preinit(AVCodecContext *avctx, QSVContext *q, enum AVPixelFormat pix_fmt, mfxVideoParam *param)
+ {
+     mfxSession session = NULL;
+@@ -303,13 +347,31 @@ static int qsv_decode_preinit(AVCodecContext *avctx, QSVContext *q, enum AVPixel
+         AV_PIX_FMT_QSV, /* opaque format in case of video memory output */
+         pix_fmt,        /* system memory format obtained from bitstream parser */
+         AV_PIX_FMT_NONE };
++    /* ff_get_format() drops the frames context, so hold on to the pool across it */
++    AVBufferRef *prev_frames_ref = NULL;
++
++    if (avctx->hw_frames_ctx) {
++        prev_frames_ref = av_buffer_ref(avctx->hw_frames_ctx);
++        if (!prev_frames_ref)
++            return AVERROR(ENOMEM);
++    }
+ 
+     ret = ff_get_format(avctx, pix_fmts);
+     if (ret < 0) {
++        av_buffer_unref(&prev_frames_ref);
+         q->orig_pix_fmt = avctx->pix_fmt = AV_PIX_FMT_NONE;
+         return ret;
+     }
+ 
++    if (prev_frames_ref && avctx->hw_device_ctx && !avctx->hw_frames_ctx &&
++        ret == AV_PIX_FMT_QSV && qsv_frames_ctx_reusable(avctx, q, prev_frames_ref)) {
++        av_log(avctx, AV_LOG_VERBOSE, "Keeping the fixed frame pool across the "
++               "parameter change\n");
++        avctx->hw_frames_ctx = prev_frames_ref;
++        prev_frames_ref = NULL;
++    }
++    av_buffer_unref(&prev_frames_ref);
++
+     if (!q->async_fifo) {
+         q->async_fifo = av_fifo_alloc2(q->async_depth, sizeof(QSVAsyncFrame), 0);
+         if (!q->async_fifo)
+@@ -344,7 +406,7 @@ static int qsv_decode_preinit(AVCodecContext *avctx, QSVContext *q, enum AVPixel
+         if (QSV_RUNTIME_VERSION_ATLEAST(q->ver, 2, 9) && q->handle_type != MFX_HANDLE_D3D9_DEVICE_MANAGER)
+             hwframes_ctx->initial_pool_size = 0;
+         else
+-            hwframes_ctx->initial_pool_size = q->suggest_pool_size + 16 + avctx->extra_hw_frames;
++            hwframes_ctx->initial_pool_size = qsv_fixed_pool_size(avctx, q);
+         frames_hwctx->frame_type        = MFX_MEMTYPE_VIDEO_MEMORY_DECODER_TARGET;
+ 
+         ret = av_hwframe_ctx_init(avctx->hw_frames_ctx);

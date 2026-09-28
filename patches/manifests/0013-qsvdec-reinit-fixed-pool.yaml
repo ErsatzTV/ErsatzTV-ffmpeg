@@ -1,0 +1,80 @@
+id: qsvdec-reinit-fixed-pool
+patch: 0013-lavc-qsvdec-keep-a-fixed-frame-pool-across-a-parameter-change.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. qsvdec.c in origin/master (84779ade26) still allocates a new
+  # frames context on every reinit: ff_get_format() -> ff_hwaccel_uninit()
+  # unrefs avctx->hw_frames_ctx, and qsv_decode_preinit() only allocates.
+  commits: []
+dependencies: []
+platforms:
+  - windows-qsv               # legacy Media SDK runtime (Gen9-Gen11, API < 2.9) or D3D9
+  - linux-qsv                 # same, only on a legacy libmfx runtime; iHD + oneVPL 2.9+ is dynamic
+reproducer: tests/qsvdec-reinit-fixed-pool.sh
+samples:
+  - samples/h264-640x480-sps-change.ts   # ErsatzTV next fixture 480p_h264_sps_change.ts
+failure_without_patch:
+  - "[fc#N] Reconfiguring filter graph because hwaccel changed"
+  - "[h264_qsv] Error submitting the frame for encoding."
+  - "Error encoding a frame: Internal bug, should not have happened (MFX_ERR_UNDEFINED_BEHAVIOR)"
+  - "without -noautoscale the rebuilt graph fails earlier: Error reinitializing filters! (-40)"
+success_with_patch:
+  - "[h264_qsv] Keeping the fixed frame pool across the parameter change (verbose)"
+  - "no filter graph reconfiguration; the stream encodes to the end"
+notes:
+  - "MECHANISM: a mid-stream SPS change makes MFX return
+     MFX_ERR_INCOMPATIBLE_VIDEO_PARAM and qsvdec reinitialises through
+     qsv_decode_preinit(). ff_get_format() drops avctx->hw_frames_ctx, so a new
+     pool is always allocated even when size and format are unchanged. fftools
+     compares the frames context's data pointer (ffmpeg_filter.c) and rebuilds
+     the filter graph. On a fixed pool every downstream MFX session (vpp_qsv,
+     the encoder) is bound to the surfaces it was opened with, so the first
+     surface from the new pool is rejected."
+  - "The patch keeps the old pool only when it still fits (same device, sw
+     format, aligned size, decoder target, and the new QueryIOSurf suggestion
+     plus upstream's 16 downstream surfaces). A real resolution change still
+     reallocates and still fails on fixed-pool runtimes; that needs
+     encoder-side support."
+  - "FLOOR: fixed pools are allocated with max(suggestion, 17 + async_depth)
+     + 16 surfaces instead of suggestion + 16. The sample's SPS change is a
+     level change (3.0 -> 5.1, same size and max_dec_frame_buffering) and the
+     suggestion follows the level's DPB: the first pool was 18 surfaces, the
+     new stream wanted 10 + 16. Keeping the 18-surface pool without the floor
+     starved the decoder whenever the encoder consumed its surfaces directly
+     (40 'Cannot allocate memory' decode errors, 20/45 frames, ffmpeg still
+     exits 0) - hence the reproducer's frame and decode-error count check.
+     The floor costs roughly 13 extra surfaces on fixed-pool runtimes only
+     (~40 MB at 1080p NV12, ~160 MB at 4K); dynamic pools are untouched."
+  - "Same rule as the 2026-08-20 removal of hwupload=extra_hw_frames=64 from
+     ErsatzTV's pipeline (see d3d11va-pool-size-clamp): a fixed pool does not
+     survive a filter graph reinit. This is the decoder-side instance."
+  - "ErsatzTV next reports it as the 12 pipeline::src_11___480p_h264_sps_change
+     failures in the qsv suite on a UHD 620 with the legacy runtime."
+last_verified:
+  version: n8.1.2
+  date: 2026-09-28
+  builds:
+    without_patch: n8.1.2-etv.1
+    with_patch: n8.1.2-etv.dev.61aff46f  # win64, patches 0001-0013
+  how: >-
+    Intel UHD 620 (Kaby Lake R, 8086:5917), Windows 11, driver 31.0.101.2127,
+    legacy Media SDK runtime API 1.35, D3D11.
+    tests/qsvdec-reinit-fixed-pool.sh: etv.1 fails both cases (encoder
+    "Internal bug" after "hwaccel changed"); the patched build passes both with
+    45/45 frames and 0 decode errors, logging "Keeping the fixed frame pool".
+    ErsatzTV next qsv suite (--test-threads 1) with the patched build: all 12
+    pipeline::src_11___480p_h264_sps_change cases pass (all 12 failed on
+    etv.1); 262/264 overall, the other 2 being the known intermittent
+    1440p p010 hwupload "Error synchronizing the operation", which passes on
+    rerun and also occurs on etv.1.
+    Arc A750 (8086:56a1), Arch Linux, i915, vpl-gpu-rt 26.2.4 (runtime 2.17),
+    linux64 build of the same commit: the reproducer reports both cases as
+    unaffected (dynamic pools, the decoder replaces its pool and the encoder
+    copes, 45/45 frames, 0 decode errors) on both etv.1 and the patched build.
+    ErsatzTV next qsv suite (--test-threads 1): 264/264 on both builds.
+remove_when: >-
+  qsvdec keeps (or lets the application keep) a compatible fixed frames
+  context across MFX_ERR_INCOMPATIBLE_VIDEO_PARAM, or the fixed-pool runtimes
+  it exists for are no longer supported.
