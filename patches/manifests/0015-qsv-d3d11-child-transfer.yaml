@@ -68,11 +68,23 @@ notes:
      the operation: -17' after a vpp_qsv scale or pad."
 last_verified:
   version: n8.1.2
-  date: null
+  date: 2026-09-28
   builds:
-    without_patch: null
-    with_patch: null
-  how: null
+    without_patch: n8.1.2-etv.dev.6a76717b  # win64 CI build, patches 0001-0014
+    with_patch: n8.1.2-etv.dev.f1500000     # win64 local build (scripts/build-native.sh), 0001-0015
+  how: >-
+    Intel HD Graphics 4600 (Haswell, 8086:0412), Windows 11, driver
+    20.19.15.5171, legacy Media SDK runtime API 1.20, D3D11. DXGI adapter 2
+    (AMD WX 3200 and NVIDIA P620 also installed).
+    tests/qsv-d3d11-child-transfer.sh (RUNS=20): without the patch roundtrip
+    fails 11/20 runs, vpp-download 11/20 and decode-download 5/20, all with
+    "Error synchronizing the operation: -17"; exact-1080p and exact-720p pass.
+    With the patch all 5 cases pass (20/20 runs each).
+    tests/qsv-get-hdl-subresource-index.sh: 4/4 pass with the patch.
+    ErsatzTV next qsv suite (--test-threads 1, with next's P010 probe fix):
+    264/264 in two consecutive runs with the patch. Without it the same
+    suite had 3 to 5 intermittent hwdownload -17 failures per run.
+    Not yet run on a oneVPL 2.x Windows runtime.
 remove_when: >-
   Upstream hwcontext_qsv transfers d3d11 frames without an internal VPP
   session, or the legacy runtimes that fail these transfers are no longer
