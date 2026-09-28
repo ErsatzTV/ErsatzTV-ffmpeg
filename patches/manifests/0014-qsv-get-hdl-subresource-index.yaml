@@ -1,0 +1,69 @@
+id: qsv-get-hdl-subresource-index
+patch: 0014-qsv-set-the-subresource-index-for-individual-textures-in-get_hdl.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. The three get_hdl callbacks (libavutil/hwcontext_qsv.c
+  # frame_get_hdl, libavfilter/qsvvpp.c frame_get_hdl, libavcodec/qsv.c
+  # qsv_frame_get_hdl) are unchanged in origin/master as of 2026-09-28.
+  commits: []
+dependencies:
+  - d3d11va-render-target-array   # 0003 is what makes render-target pools
+                                  # individual textures (MFX_INFINITE index).
+                                  # Arrays are not an alternative: they fail
+                                  # with E_INVALIDARG on Haswell too.
+platforms:
+  - windows-qsv               # legacy Media SDK runtime; verified on API 1.20
+reproducer: tests/qsv-get-hdl-subresource-index.sh
+samples: []                   # synthetic lavfi sources; the bug is in how
+                              # surfaces are handed to the runtime
+failure_without_patch:
+  - "[Parsed_vpp_qsv_N] Error running VPP: device failed (-17)"
+  - "[Parsed_overlay_qsv_N] Error running VPP: device failed (-17)"
+success_with_patch:
+  - "VPP (scale, format conversion, pad, overlay_qsv) runs on surfaces from
+     hwupload and vpp_qsv output pools"
+notes:
+  - "MECHANISM: hwcontext_qsv builds an mfxHDLPair per surface. For a
+     render-target pool (hwupload, vpp_qsv output) the textures are individual,
+     so the pair's index is MFX_INFINITE. The get_hdl callbacks copy the
+     texture and write the index only when it is not MFX_INFINITE, so for
+     these surfaces the index half of the output pair keeps whatever the
+     runtime had in it. The API 1.20 runtime on Haswell uses it as the D3D11
+     subresource index and fails the VPP run with MFX_ERR_DEVICE_FAILED. The
+     patch writes 0 instead, the index hwcontext_qsv already uses for
+     MFX_INFINITE when it maps these surfaces back to d3d11va."
+  - "SCOPE: VPP whose input is a hwupload or VPP output surface. The encoder
+     accepts the same surfaces, and VPP on decoder surfaces (array textures
+     with real indexes) works, which is why decode -> vpp_qsv -> encode and
+     a scale+pad fused into one vpp_qsv pass worked without the patch while a
+     second vpp_qsv, overlay_qsv, or VPP after hwupload did not."
+  - "REACHABILITY: these runtimes also need the libvpl dispatcher patch in
+     native/FFmpeg-Builds (patches/libvpl) when the Intel GPU is not the
+     primary adapter or the runtime reports no device ID. Without it
+     -init_hw_device qsv fails with MFX_ERR_NOT_FOUND (-9) and the reproducer
+     skips every case."
+  - "NOT VERIFIED: Linux. VA-API pools also use MFX_INFINITE for the index,
+     so this changes the pair Linux runtimes receive (index 0 instead of an
+     untouched field). Also not yet run on a oneVPL 2.x runtime (TGL, Arc),
+     where 0 is the correct subresource of an individual texture."
+  - "ErsatzTV next reports it as the 4 canvas cases in the qsv suite on an
+     HD 4600 (overlay_qsv of the canvas), which pass with the patch."
+last_verified:
+  version: n8.1.2
+  date: 2026-09-28
+  builds:
+    without_patch: n8.1.2-etv.dev.vplpatch      # win64, patches 0001-0013, patched libvpl
+    with_patch:    n8.1.2-etv.dev.vplpatch-p14  # the same plus this patch
+  how: >-
+    Intel HD Graphics 4600 (Haswell, 8086:0412), Windows 11, driver
+    20.19.15.5171, legacy Media SDK runtime API 1.20, D3D11. DXGI adapter 2
+    (AMD WX 3200 and NVIDIA P620 also installed).
+    tests/qsv-get-hdl-subresource-index.sh: without the patch all 4 cases fail
+    with "device failed (-17)"; with the patch all 4 pass. n8.1.2-etv.1 skips
+    all 4 (-init_hw_device qsv fails, unpatched libvpl).
+    ErsatzTV next qsv canvas tests: 4/4 pass with the patch.
+remove_when: >-
+  Upstream get_hdl callbacks always write the index half of the pair, or the
+  legacy runtimes this exists for are no longer supported.

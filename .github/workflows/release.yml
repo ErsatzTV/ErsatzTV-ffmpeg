@@ -48,6 +48,18 @@ jobs:
       - name: Check native dependency lock
         run: sh scripts/check-native-lock.sh
 
+      # the fork's etv/* tags are protected by a ruleset; they keep the pinned
+      # commit reachable when the fork's branch is rebased onto upstream
+      - name: Check fork pin tag
+        run: |
+          fork=native/FFmpeg-Builds
+          git -C "$fork" fetch --no-tags origin "refs/tags/etv/$RELEASE_TAG:refs/tags/etv/$RELEASE_TAG" ||
+            { echo "::error::fork has no tag etv/$RELEASE_TAG"; exit 1; }
+          have=$(git -C "$fork" rev-parse "etv/$RELEASE_TAG^{commit}")
+          want=$(git -C "$fork" rev-parse HEAD)
+          [ "$have" = "$want" ] ||
+            { echo "::error::fork tag etv/$RELEASE_TAG is $have, submodule is $want"; exit 1; }
+
       - name: Check upstream and patch stack
         run: sh scripts/check-upstream.sh "$RUNNER_TEMP/upstream"
 
