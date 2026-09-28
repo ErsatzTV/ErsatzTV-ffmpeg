@@ -1,8 +1,8 @@
 diff --git a/libavutil/hwcontext_qsv.c b/libavutil/hwcontext_qsv.c
-index cbcbff8c83..26bc7fa039 100644
+index 0c9f983e0b..9749a6cda7 100644
 --- a/libavutil/hwcontext_qsv.c
 +++ b/libavutil/hwcontext_qsv.c
-@@ -1711,10 +1711,24 @@ static int qsv_transfer_data_child(AVHWFramesContext *ctx, AVFrame *dst,
+@@ -1718,10 +1718,24 @@ static int qsv_transfer_data_child(AVHWFramesContext *ctx, AVFrame *dst,
      dummy->data[3]       = surf->Data.MemId;
      dummy->hw_frames_ctx = s->child_frames_ref;
  
@@ -27,7 +27,7 @@ index cbcbff8c83..26bc7fa039 100644
      dummy->data[3]       = NULL;
      dummy->hw_frames_ctx = NULL;
  
-@@ -1818,6 +1832,24 @@ static int qsv_internal_session_check_init(AVHWFramesContext *ctx, int upload)
+@@ -1825,6 +1839,24 @@ static int qsv_internal_session_check_init(AVHWFramesContext *ctx, int upload)
      return ret;
  }
  
@@ -52,7 +52,7 @@ index cbcbff8c83..26bc7fa039 100644
  static int qsv_transfer_data_from(AVHWFramesContext *ctx, AVFrame *dst,
                                    const AVFrame *src)
  {
-@@ -1833,6 +1865,9 @@ static int qsv_transfer_data_from(AVHWFramesContext *ctx, AVFrame *dst,
+@@ -1840,6 +1872,9 @@ static int qsv_transfer_data_from(AVHWFramesContext *ctx, AVFrame *dst,
      AVFrame *dst_frame;
      int realigned = 0;
  
@@ -62,7 +62,7 @@ index cbcbff8c83..26bc7fa039 100644
      ret = qsv_internal_session_check_init(ctx, 0);
      if (ret < 0)
          return ret;
-@@ -1917,6 +1952,9 @@ static int qsv_transfer_data_to(AVHWFramesContext *ctx, AVFrame *dst,
+@@ -1924,6 +1959,9 @@ static int qsv_transfer_data_to(AVHWFramesContext *ctx, AVFrame *dst,
      const AVFrame *src_frame;
      int realigned = 0;
  
