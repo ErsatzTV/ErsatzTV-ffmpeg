@@ -15,6 +15,8 @@ dependencies:
                                   # with E_INVALIDARG on Haswell too.
 platforms:
   - windows-qsv               # legacy Media SDK runtime; verified on API 1.20
+                              # linux-qsv is not a target, but the reproducer's
+                              # decode cases guard it (see LINUX below)
 reproducer: tests/qsv-get-hdl-subresource-index.sh
 samples: []                   # synthetic lavfi sources; the bug is in how
                               # surfaces are handed to the runtime
@@ -24,6 +26,8 @@ failure_without_patch:
 success_with_patch:
   - "VPP (scale, format conversion, pad, overlay_qsv) runs on surfaces from
      hwupload and vpp_qsv output pools"
+  - "Linux VA-API: QSV decode to video memory, and VPP/encode on those
+     surfaces, run as they do without the patch"
 notes:
   - "MECHANISM: hwcontext_qsv builds an mfxHDLPair per surface. For a
      render-target pool (hwupload, vpp_qsv output) the textures are individual,
@@ -33,7 +37,10 @@ notes:
      runtime had in it. The API 1.20 runtime on Haswell uses it as the D3D11
      subresource index and fails the VPP run with MFX_ERR_DEVICE_FAILED. The
      patch writes 0 instead, the index hwcontext_qsv already uses for
-     MFX_INFINITE when it maps these surfaces back to d3d11va."
+     MFX_INFINITE when it maps these surfaces back to d3d11va. It does so only
+     when the session is MFX_IMPL_VIA_D3D11 (device impl in hwcontext_qsv,
+     via_d3d11 set at session setup in qsvvpp and lavc/qsv), because only
+     D3D11 runtimes hand get_hdl an mfxHDLPair."
   - "SCOPE: VPP whose input is a hwupload or VPP output surface. The encoder
      accepts the same surfaces, and VPP on decoder surfaces (array textures
      with real indexes) works, which is why decode -> vpp_qsv -> encode and
@@ -44,16 +51,36 @@ notes:
      primary adapter or the runtime reports no device ID. Without it
      -init_hw_device qsv fails with MFX_ERR_NOT_FOUND (-9) and the reproducer
      skips every case."
-  - "LINUX: VA-API pools also use MFX_INFINITE for the index, so this changes
-     the pair Linux runtimes receive (index 0 instead of an untouched field).
-     On Arc with vpl-gpu-rt the reproducer and the ErsatzTV next qsv suite
-     pass with and without the patch (see last_verified), so the change is
-     harmless there. Not run on a legacy libmfx runtime on Linux."
+  - "LINUX: the first revision (in n8.1.2-etv.dev.6a76717b) wrote the index
+     unconditionally and broke QSV decode to video memory on Linux: ffmpeg
+     aborts with '*** stack smashing detected ***' (exit 134) for every codec.
+     VA-API pools also carry MFX_INFINITE, and vpl-gpu-rt sometimes passes
+     get_hdl a single mfxHDL, not a pair (_studio/shared/src/libmfx_core_vaapi.cpp,
+     'mfxHDL srcHandle; GetFrameHDL(surf->Data.MemId, &srcHandle)'), so writing
+     the second member overran the caller's stack. Upstream never writes it
+     for VA-API, because the index is always MFX_INFINITE there. Bisected on an
+     N100 (8086:46d1), Debian 13, libmfx-gen1.2 25.1.4, iHD 25.2.3 (free and
+     non-free): n8.1.2-etv.1 and n8.1.2-etv.dev.cb938dc6 (0001-0013) decode
+     fine, 6a76717b aborts. The FFmpeg-Builds libvpl patch in the same PR is
+     Windows-only (_WIN32 and windows/), so it is not involved. 6a76717b
+     also decodes on Arc (A750, and an A310 with vpl-gpu-rt 25.4), most likely
+     because the overrun lands somewhere harmless in those runtimes' frames. D3D9 runtimes are guarded the same way, since their
+     pools also use MFX_INFINITE. The reproducer's decode-encode and
+     decode-vpp cases catch this."
   - "NOT VERIFIED: a oneVPL 2.x runtime on Windows (TGL and newer, Arc), where
      0 is the correct subresource of an individual texture."
   - "ErsatzTV next reports it as the 4 canvas cases in the qsv suite on an
      HD 4600 (overlay_qsv of the canvas), which pass with the patch."
 last_verified:
+  # The builds/how below are for the first revision (unconditional write),
+  # whose Windows behaviour the D3D11-only revision keeps.
+  # D3D11-only revision, linux64 (local build n8.1.2-etv.dev.a387eff2 on
+  # 2026-09-28), on the N100 (8086:46d1, Debian 13, libmfx-gen 25.1.4, iHD
+  # 25.2.3 non-free): reproducer 6/6 pass; ErsatzTV next probe_capabilities
+  # qsv-verify 0 mismatches in 24, including QSV-decoded HDR10 tonemap. Same
+  # host: n8.1.2-etv.1 and etv.dev.cb938dc6 pass 6/6, etv.dev.6a76717b fails
+  # decode-encode and decode-vpp with "stack smashing detected".
+  # Still needed: a win64 run of this revision on the HD 4600 (all 6 cases).
   version: n8.1.2
   date: 2026-09-28
   builds:
