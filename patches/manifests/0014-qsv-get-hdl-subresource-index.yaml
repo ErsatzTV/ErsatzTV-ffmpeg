@@ -80,7 +80,10 @@ last_verified:
   # qsv-verify 0 mismatches in 24, including QSV-decoded HDR10 tonemap. Same
   # host: n8.1.2-etv.1 and etv.dev.cb938dc6 pass 6/6, etv.dev.6a76717b fails
   # decode-encode and decode-vpp with "stack smashing detected".
-  # Still needed: a win64 run of this revision on the HD 4600 (all 6 cases).
+  # D3D11-only revision, win64 (local build n8.1.2-etv.dev.14150000 on
+  # 2026-09-28, with 0015), on the HD 4600 described below: reproducer 6/6
+  # pass; ErsatzTV next qsv suite (--test-threads 1) 264/264 in two
+  # consecutive runs.
   version: n8.1.2
   date: 2026-09-28
   builds:
