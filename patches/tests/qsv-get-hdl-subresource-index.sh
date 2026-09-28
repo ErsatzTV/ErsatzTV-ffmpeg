@@ -13,16 +13,25 @@
 # pool fails with "Error running VPP: device failed (-17)". The encoder and VPP
 # on decoder surfaces (array textures with real indexes) are unaffected.
 #
-# Linux VA-API with vpl-gpu-rt (verified on Arc) passes every case with or
-# without the patch, so a pass there only shows that the patch does no harm.
+# Only D3D11 runtimes hand get_hdl an mfxHDLPair. VA-API (and D3D9) runtimes
+# may pass a single mfxHDL, so the index must be written only on D3D11
+# sessions. The first revision of 0014 wrote it unconditionally, and on Linux
+# QSV decode to video memory then aborted with "*** stack smashing detected ***"
+# (seen on an N100 with libmfx-gen 25.1.4; Arc happened to survive). The
+# decode-* cases guard against that. On Linux every case passes with or
+# without the patch; there a pass shows the patch does no harm.
 #
-# Cases, all synthetic (lavfi) so no sample file is needed:
+# Cases, all synthetic so no sample file is needed:
 #
 #   upload-vpp     hwupload -> vpp_qsv scale. VPP input is a hwupload surface.
 #   vpp-vpp        hwupload -> vpp_qsv scale -> vpp_qsv scale. The second VPP
 #                  reads the first one's output pool.
 #   upload-rgb4    bgra hwupload -> vpp_qsv to nv12, the canvas/watermark path.
 #   overlay        overlay_qsv of an uploaded bgra canvas onto uploaded nv12.
+#   decode-encode  QSV decode to video memory -> encoder. Decoder surfaces go
+#                  through lavc/qsv's get_hdl. The input is a short h264 clip
+#                  made with libx264 at startup (skipped without libx264).
+#   decode-vpp     QSV decode to video memory -> vpp_qsv scale -> encoder.
 #
 # The fixed-pool runtimes this affects are also the ones that cannot reach
 # QSV at all through an unpatched libvpl dispatcher when the Intel GPU is not
@@ -40,7 +49,7 @@ set -uo pipefail
 
 FFMPEG="${1:-${FFMPEG:-ffmpeg}}"
 
-CASES="${CASES:-upload-vpp vpp-vpp upload-rgb4 overlay}"
+CASES="${CASES:-upload-vpp vpp-vpp upload-rgb4 overlay decode-encode decode-vpp}"
 INIT_HW_DEVICE="${INIT_HW_DEVICE:-qsv=hw}"
 ENCODER="${ENCODER:-h264_qsv}"
 TIMEOUT="${TIMEOUT:-60}"
@@ -95,6 +104,14 @@ run_case() {
         return
     fi
 
+    # 134 is SIGABRT (the stack protector), 139 SIGSEGV
+    if grep -q "stack smashing detected" "$log" || [ $rc -eq 134 ] || [ $rc -eq 139 ]; then
+        echo "FAIL: $name - ffmpeg crashed (exit $rc); get_hdl wrote a pair into a single-handle caller, as the first revision of 0014 did"
+        sed -n 's/^/       | /p' <<<"$(tail -3 "$log")"
+        fail=$((fail + 1))
+        return
+    fi
+
     if [ $rc -eq 124 ]; then
         echo "FAIL: $name - ffmpeg did not exit within ${TIMEOUT}s"
         sed -n 's/^/       | /p' <<<"$(tail -3 "$log")"
@@ -124,6 +141,17 @@ run_case() {
 
 SRC="testsrc2=size=640x480:rate=24:duration=2"
 
+# $1 case name. Makes the h264 clip the decode-* cases read, once.
+DECODE_SRC="$logdir/decode-src.ts"
+make_decode_src() {
+    [ -s "$DECODE_SRC" ] && return 0
+    "$FFMPEG" -nostdin -hide_banner -loglevel error -f lavfi -i "$SRC" \
+        -c:v libx264 -pix_fmt yuv420p -g 24 "$DECODE_SRC" >"$logdir/decode-src.log" 2>&1 && return 0
+    echo "SKIP: $1 - cannot make the h264 input (no libx264?)"
+    skip=$((skip + 1))
+    return 1
+}
+
 echo "ffmpeg:  $FFMPEG"
 echo "version: $("$FFMPEG" -version 2>/dev/null | head -1)"
 echo "device:  $INIT_HW_DEVICE"
@@ -144,6 +172,13 @@ for case in $CASES; do
             run_case overlay -f lavfi -i "$SRC" \
                 -f lavfi -i "color=red@0.5:size=320x180:rate=24:duration=2,format=bgra" \
                 -filter_complex "[0:v]format=nv12,hwupload[m];[1:v]hwupload[o];[m][o]overlay_qsv=x=0:y=0:eof_action=pass" ;;
+        decode-encode)
+            make_decode_src decode-encode &&
+            run_case decode-encode -hwaccel qsv -hwaccel_output_format qsv -i "$DECODE_SRC" ;;
+        decode-vpp)
+            make_decode_src decode-vpp &&
+            run_case decode-vpp -hwaccel qsv -hwaccel_output_format qsv -i "$DECODE_SRC" \
+                -vf "vpp_qsv=w=320:h=240" ;;
         *) echo "unknown case: $case" >&2; exit 2 ;;
     esac
 done

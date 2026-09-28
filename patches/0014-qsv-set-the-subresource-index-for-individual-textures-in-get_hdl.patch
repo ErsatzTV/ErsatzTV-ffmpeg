@@ -1,51 +1,129 @@
 diff --git a/libavcodec/qsv.c b/libavcodec/qsv.c
-index cd5195a..f951d77 100644
+index cd5195a..7a4588e 100644
 --- a/libavcodec/qsv.c
 +++ b/libavcodec/qsv.c
-@@ -1024,8 +1024,10 @@ static mfxStatus qsv_frame_get_hdl(mfxHDL pthis, mfxMemId mid, mfxHDL *hdl)
+@@ -1024,8 +1024,15 @@ static mfxStatus qsv_frame_get_hdl(mfxHDL pthis, mfxMemId mid, mfxHDL *hdl)
  
      pair_dst->first = pair_src->first;
  
--    if (pair_src->second != (mfxMemId)MFX_INFINITE)
--        pair_dst->second = pair_src->second;
-+    /* individual (non-array) textures carry MFX_INFINITE as their index. the
-+     * output pair is not guaranteed to be zeroed, and legacy Media SDK runtimes
-+     * use its second member as the subresource index, so always write it */
-+    pair_dst->second = pair_src->second != (mfxMemId)MFX_INFINITE ? pair_src->second : (mfxMemId)0;
++    /* individual (non-array) D3D11 textures carry MFX_INFINITE as their index.
++     * the output pair is not guaranteed to be zeroed, and legacy Media SDK
++     * runtimes use its second member as the subresource index, so write 0.
++     * only D3D11 runtimes pass a pair: VA-API and D3D9 runtimes may pass a
++     * single mfxHDL, where writing the second member overruns the caller */
+     if (pair_src->second != (mfxMemId)MFX_INFINITE)
+         pair_dst->second = pair_src->second;
++    else if (ctx->via_d3d11)
++        pair_dst->second = (mfxMemId)0;
      return MFX_ERR_NONE;
  }
  
+@@ -1123,6 +1130,7 @@ int ff_qsv_init_session_frames(AVCodecContext *avctx, mfxSession *psession,
+     AVQSVFramesContext *frames_hwctx = frames_ctx->hwctx;
+ 
+     mfxSession    session;
++    mfxIMPL       impl;
+     mfxStatus err;
+ 
+     int ret;
+@@ -1132,6 +1140,9 @@ int ff_qsv_init_session_frames(AVCodecContext *avctx, mfxSession *psession,
+     if (ret < 0)
+         return ret;
+ 
++    qsv_frames_ctx->via_d3d11 = MFXQueryIMPL(session, &impl) == MFX_ERR_NONE &&
++                                MFX_IMPL_VIA_MASK(impl) == MFX_IMPL_VIA_D3D11;
++
+     if (!opaque) {
+         qsv_frames_ctx->logctx = avctx;
+         qsv_frames_ctx->mids = NULL;
+diff --git a/libavcodec/qsv_internal.h b/libavcodec/qsv_internal.h
+index d970cd2..6da9bac 100644
+--- a/libavcodec/qsv_internal.h
++++ b/libavcodec/qsv_internal.h
+@@ -123,6 +123,12 @@ typedef struct QSVFramesContext {
+      */
+     QSVMid *mids;
+     int  nb_mids;
++
++    /**
++     * The session's frame handles are mfxHDLPairs (D3D11). VA-API and D3D9
++     * runtimes may hand get_hdl a single mfxHDL instead.
++     */
++    int via_d3d11;
+ } QSVFramesContext;
+ 
+ int ff_qsv_print_iopattern(void *log_ctx, int mfx_iopattern,
 diff --git a/libavfilter/qsvvpp.c b/libavfilter/qsvvpp.c
-index c3685f1..bf3bb3e 100644
+index c3685f1..933c3f2 100644
 --- a/libavfilter/qsvvpp.c
 +++ b/libavfilter/qsvvpp.c
-@@ -230,8 +230,10 @@ static mfxStatus frame_get_hdl(mfxHDL pthis, mfxMemId mid, mfxHDL *hdl)
+@@ -225,13 +225,21 @@ static mfxStatus frame_unlock(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr)
+ 
+ static mfxStatus frame_get_hdl(mfxHDL pthis, mfxMemId mid, mfxHDL *hdl)
+ {
++    QSVVPPContext *s = pthis;
+     mfxHDLPair *pair_dst = (mfxHDLPair*)hdl;
+     mfxHDLPair *pair_src = (mfxHDLPair*)mid;
  
      pair_dst->first = pair_src->first;
  
--    if (pair_src->second != (mfxMemId)MFX_INFINITE)
--        pair_dst->second = pair_src->second;
-+    /* individual (non-array) textures carry MFX_INFINITE as their index. the
-+     * output pair is not guaranteed to be zeroed, and legacy Media SDK runtimes
-+     * use its second member as the subresource index, so always write it */
-+    pair_dst->second = pair_src->second != (mfxMemId)MFX_INFINITE ? pair_src->second : (mfxMemId)0;
++    /* individual (non-array) D3D11 textures carry MFX_INFINITE as their index.
++     * the output pair is not guaranteed to be zeroed, and legacy Media SDK
++     * runtimes use its second member as the subresource index, so write 0.
++     * only D3D11 runtimes pass a pair: VA-API and D3D9 runtimes may pass a
++     * single mfxHDL, where writing the second member overruns the caller */
+     if (pair_src->second != (mfxMemId)MFX_INFINITE)
+         pair_dst->second = pair_src->second;
++    else if (s->via_d3d11)
++        pair_dst->second = (mfxMemId)0;
      return MFX_ERR_NONE;
  }
  
+@@ -605,6 +613,8 @@ static int init_vpp_session(AVFilterContext *avctx, QSVVPPContext *s)
+         return AVERROR_UNKNOWN;
+     }
+ 
++    s->via_d3d11 = MFX_IMPL_VIA_D3D11 == MFX_IMPL_VIA_MASK(impl);
++
+     if (MFX_IMPL_VIA_VAAPI == MFX_IMPL_VIA_MASK(impl)) {
+         handle_type = MFX_HANDLE_VA_DISPLAY;
+     } else if (MFX_IMPL_VIA_D3D11 == MFX_IMPL_VIA_MASK(impl)) {
+diff --git a/libavfilter/qsvvpp.h b/libavfilter/qsvvpp.h
+index 5cf4577..ade4d3a 100644
+--- a/libavfilter/qsvvpp.h
++++ b/libavfilter/qsvvpp.h
+@@ -64,6 +64,7 @@ typedef struct QSVVPPContext {
+     const AVClass      *class;
+ 
+     mfxSession          session;
++    int                 via_d3d11;       /**< the session's frame handles are mfxHDLPairs */
+     int (*filter_frame) (AVFilterLink *outlink, AVFrame *frame); /**< callback */
+     int (*set_frame_ext_params)(AVFilterContext *ctx, const AVFrame *in, AVFrame *out, QSVVPPFrameParam *fp); /**< callback */
+     enum AVPixelFormat  out_sw_format;   /**< Real output format */
 diff --git a/libavutil/hwcontext_qsv.c b/libavutil/hwcontext_qsv.c
-index b92c9cb..cbcbff8 100644
+index b92c9cb..0c9f983 100644
 --- a/libavutil/hwcontext_qsv.c
 +++ b/libavutil/hwcontext_qsv.c
-@@ -822,8 +822,10 @@ static mfxStatus frame_get_hdl(mfxHDL pthis, mfxMemId mid, mfxHDL *hdl)
+@@ -817,13 +817,22 @@ static mfxStatus frame_unlock(mfxHDL pthis, mfxMemId mid, mfxFrameData *ptr)
+ 
+ static mfxStatus frame_get_hdl(mfxHDL pthis, mfxMemId mid, mfxHDL *hdl)
+ {
++    AVHWFramesContext *ctx = pthis;
++    QSVDeviceContext *device_priv = ctx->device_ctx->hwctx;
+     mfxHDLPair *pair_dst = (mfxHDLPair*)hdl;
+     mfxHDLPair *pair_src = (mfxHDLPair*)mid;
  
      pair_dst->first = pair_src->first;
  
--    if (pair_src->second != (mfxMemId)MFX_INFINITE)
--        pair_dst->second = pair_src->second;
-+    /* individual (non-array) textures carry MFX_INFINITE as their index. the
-+     * output pair is not guaranteed to be zeroed, and legacy Media SDK runtimes
-+     * use its second member as the subresource index, so always write it */
-+    pair_dst->second = pair_src->second != (mfxMemId)MFX_INFINITE ? pair_src->second : (mfxMemId)0;
++    /* individual (non-array) D3D11 textures carry MFX_INFINITE as their index.
++     * the output pair is not guaranteed to be zeroed, and legacy Media SDK
++     * runtimes use its second member as the subresource index, so write 0.
++     * only D3D11 runtimes pass a pair: VA-API and D3D9 runtimes may pass a
++     * single mfxHDL, where writing the second member overruns the caller */
+     if (pair_src->second != (mfxMemId)MFX_INFINITE)
+         pair_dst->second = pair_src->second;
++    else if (MFX_IMPL_VIA_MASK(device_priv->impl) == MFX_IMPL_VIA_D3D11)
++        pair_dst->second = (mfxMemId)0;
      return MFX_ERR_NONE;
  }
  
