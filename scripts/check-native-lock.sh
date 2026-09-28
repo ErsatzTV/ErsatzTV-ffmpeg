@@ -34,12 +34,12 @@ git -C "$fork" merge-base --is-ancestor "$locked" "$head" ||
     fail "lock fork_commit $locked is not an ancestor of submodule HEAD $head"
 
 # exactly the paths that trigger deps.yml in the fork
-if ! git -C "$fork" diff --quiet "$locked" "$head" -- \
-    scripts.d images variants addins util generate.sh download.sh \
-    .github/buildkit.toml .github/workflows/deps.yml; then
-    git -C "$fork" diff --stat "$locked" "$head" -- \
-        scripts.d images variants addins util generate.sh download.sh \
-        .github/buildkit.toml .github/workflows/deps.yml >&2
+recipes="scripts.d patches images variants addins util generate.sh download.sh
+    .github/buildkit.toml .github/workflows/deps.yml"
+# shellcheck disable=SC2086
+if ! git -C "$fork" diff --quiet "$locked" "$head" -- $recipes; then
+    # shellcheck disable=SC2086
+    git -C "$fork" diff --stat "$locked" "$head" -- $recipes >&2
     fail "dependency recipes changed since $locked; run deps.yml and update $lock"
 fi
 

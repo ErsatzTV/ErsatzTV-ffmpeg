@@ -1,9 +1,9 @@
 {
-  "fork_commit": "4240e88fd4b48f4bce5389a129f622991e81c1b1",
+  "fork_commit": "de51c34f457e341af13541240eba7d44c7c24e0e",
   "variant": "gpl 8.1",
   "images": {
     "linux64": "ghcr.io/ersatztv/ffmpeg-builds/linux64-gpl-8.1@sha256:3a6f5304e836c22ac86e629667a5ebb23a319eb9072359fde7c2d6649e8a8b65",
     "linuxarm64": "ghcr.io/ersatztv/ffmpeg-builds/linuxarm64-gpl-8.1@sha256:554451a2a5c81bbc16e3c8c573c9a68f1c4abcc1798df5c45b3fc507d33f0df5",
-    "win64": "ghcr.io/ersatztv/ffmpeg-builds/win64-gpl-8.1@sha256:93d100cea979a1d4fce0629c59c752f9462e5bd8ec912c1bbde7eb6d620f0000"
+    "win64": "ghcr.io/ersatztv/ffmpeg-builds/win64-gpl-8.1@sha256:b690a2ad047aaa92bfc9e8bbe026684f2677a71ec190d6d457f3f3b64de26821"
   }
 }
