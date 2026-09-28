@@ -1,0 +1,91 @@
+id: qsv-d3d11-child-transfer
+patch: 0015-avutil-hwcontext_qsv-transfer-d3d11-frames-through-the-child-context.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. libavutil/hwcontext_qsv.c in origin/master (291f96f792)
+  # still transfers through internal VPP sessions, and its fallback,
+  # qsv_transfer_data_child(), still hands a d3d11va child a handle pair in
+  # data[3] instead of the texture in data[0] and the index in data[1].
+  commits: []
+dependencies: []
+platforms:
+  - windows-qsv               # every runtime with a d3d11va child device; the failure
+                              # is seen on legacy Media SDK runtimes (API 1.x)
+reproducer: tests/qsv-d3d11-child-transfer.sh
+samples: []                   # synthetic lavfi sources; decode-download encodes its
+                              # own 1440p H.264 sample with libx264
+failure_without_patch:
+  - "[AVHWFramesContext] Error synchronizing the operation: -17"
+  - "[hwdownload] Failed to download frame: -1313558101."
+  - "[AVHWFramesContext] Error synchronizing the operation"
+  - "[hwupload] Failed to upload frame: -1313558101."
+success_with_patch:
+  - "hwupload and hwdownload of d3d11 QSV frames never create an internal VPP
+     session; transfers are bit exact with the software path"
+notes:
+  - "MECHANISM: hwcontext_qsv copies frames between system and video memory
+     with one internal VPP session per direction. On a legacy runtime one of
+     the first one or two transfers of a process can fail in SyncOperation
+     with MFX_ERR_DEVICE_FAILED (-17). After that the session returns
+     MFX_ERR_UNDEFINED_BEHAVIOR (-16) for every call, so a retry cannot
+     recover. The rate grows with the frame size (720p almost never, 1440p
+     about half of the runs), and a run that gets past the first two
+     transfers never fails. The cause is inside the runtime and not known."
+  - "RULED OUT: vpp_qsv, the decoder and the encoder (a bare hwupload ->
+     hwdownload fails); destination buffer alignment (always 64-byte aligned,
+     the same in good and bad runs); GPU power state (a busy GPU fails at the
+     same rate); a race with the preceding upload (delaying the download does
+     not help); joining the internal sessions to the parent session (fails at
+     the same rate); a display driver reset (no TDR events). The runtime's own
+     system memory output (h264_qsv decode without -hwaccel_output_format
+     qsv) does not fail, with gpu_copy on or off."
+  - "FIX: when the child device is d3d11va, transfer through the child
+     frames context (qsv_transfer_data_child) before the internal session is
+     created, so the runtime does not do the copy. That path already existed
+     as the fallback for a session that cannot be opened, but for d3d11va it
+     put the handle pair in data[3], where d3d11va reads the texture from
+     data[0] and the array index from data[1]. The patch sets those, with
+     index 0 for individual textures (MFX_INFINITE), as 0014 does."
+  - "REALIGNMENT: the transfer functions download into a temporary frame when
+     the height is not a multiple of 16, and the old fallback returned without
+     copying it back, so a 1080p download through it returned stale pixels.
+     The patch takes the child path before the realignment step. d3d11va
+     copies any size, so the temporary frame is not needed. The exact-1080p
+     reproducer case covers this."
+  - "SCOPE: every d3d11va child device, including oneVPL 2.x runtimes, so the
+     patch can be evaluated across Intel generations. The failure itself is
+     only seen on legacy runtimes: API 1.20 (Haswell) here, and the UHD 620
+     (API 1.35) showed the same intermittent 1440p 'Error synchronizing the
+     operation' in the 0013 verification. dxva2 and vaapi children and opaque
+     surfaces keep the internal sessions."
+  - "PERFORMANCE: on the HD 4600 the d3d11va copy is faster than the runtime's.
+     300 frames of upload + download: 1080p 2.8s vs 4.0s, 1440p 4.6s vs 5.9s;
+     upload only: 1080p 1.2s vs 2.1s, 1440p 1.8s vs 2.9s."
+  - "ErsatzTV next reports it as intermittent failures of the qsv suite, most
+     often at 1920x1080 and 2560x1440, with hwdownload 'Error synchronizing
+     the operation: -17' after a vpp_qsv scale or pad."
+last_verified:
+  version: n8.1.2
+  date: 2026-09-28
+  builds:
+    without_patch: n8.1.2-etv.dev.6a76717b  # win64 CI build, patches 0001-0014
+    with_patch: n8.1.2-etv.dev.f1500000     # win64 local build (scripts/build-native.sh), 0001-0015
+  how: >-
+    Intel HD Graphics 4600 (Haswell, 8086:0412), Windows 11, driver
+    20.19.15.5171, legacy Media SDK runtime API 1.20, D3D11. DXGI adapter 2
+    (AMD WX 3200 and NVIDIA P620 also installed).
+    tests/qsv-d3d11-child-transfer.sh (RUNS=20): without the patch roundtrip
+    fails 11/20 runs, vpp-download 11/20 and decode-download 5/20, all with
+    "Error synchronizing the operation: -17"; exact-1080p and exact-720p pass.
+    With the patch all 5 cases pass (20/20 runs each).
+    tests/qsv-get-hdl-subresource-index.sh: 4/4 pass with the patch.
+    ErsatzTV next qsv suite (--test-threads 1, with next's P010 probe fix):
+    264/264 in two consecutive runs with the patch. Without it the same
+    suite had 3 to 5 intermittent hwdownload -17 failures per run.
+    Not yet run on a oneVPL 2.x Windows runtime.
+remove_when: >-
+  Upstream hwcontext_qsv transfers d3d11 frames without an internal VPP
+  session, or the legacy runtimes that fail these transfers are no longer
+  supported and oneVPL 2.x runtimes are shown to prefer the internal session.

@@ -1,0 +1,74 @@
+diff --git a/libavutil/hwcontext_qsv.c b/libavutil/hwcontext_qsv.c
+index 0c9f983e0b..9749a6cda7 100644
+--- a/libavutil/hwcontext_qsv.c
++++ b/libavutil/hwcontext_qsv.c
+@@ -1718,10 +1718,24 @@ static int qsv_transfer_data_child(AVHWFramesContext *ctx, AVFrame *dst,
+     dummy->data[3]       = surf->Data.MemId;
+     dummy->hw_frames_ctx = s->child_frames_ref;
+ 
++#if CONFIG_D3D11VA
++    /* a d3d11va frame carries the texture in data[0] and its array index in
++     * data[1], not a handle pair in data[3]. individual textures carry
++     * MFX_INFINITE as their index */
++    if (child_frames_ctx->device_ctx->type == AV_HWDEVICE_TYPE_D3D11VA) {
++        mfxHDLPair *pair = (mfxHDLPair*)surf->Data.MemId;
++        dummy->data[0] = pair->first;
++        dummy->data[1] = pair->second != (mfxMemId)MFX_INFINITE ? pair->second : NULL;
++        dummy->data[3] = NULL;
++    }
++#endif
++
+     ret = download ? av_hwframe_transfer_data(dst, dummy, 0) :
+                      av_hwframe_transfer_data(dummy, src, 0);
+ 
+     dummy->buf[0]        = NULL;
++    dummy->data[0]       = NULL;
++    dummy->data[1]       = NULL;
+     dummy->data[3]       = NULL;
+     dummy->hw_frames_ctx = NULL;
+ 
+@@ -1825,6 +1839,24 @@ static int qsv_internal_session_check_init(AVHWFramesContext *ctx, int upload)
+     return ret;
+ }
+ 
++/* copy d3d11 frames through the child d3d11va frames context instead of an
++ * internal VPP session. legacy Media SDK runtimes can fail the first system
++ * memory transfers of a process with MFX_ERR_DEVICE_FAILED, which leaves the
++ * session unusable, and the d3d11va copy has no alignment requirements */
++static int qsv_transfer_via_child(AVHWFramesContext *ctx)
++{
++#if CONFIG_D3D11VA
++    QSVFramesContext *s = ctx->hwctx;
++
++    if (s->child_frames_ref) {
++        AVHWFramesContext *child_frames_ctx = (AVHWFramesContext*)s->child_frames_ref->data;
++        return child_frames_ctx->device_ctx->type == AV_HWDEVICE_TYPE_D3D11VA;
++    }
++#endif
++
++    return 0;
++}
++
+ static int qsv_transfer_data_from(AVHWFramesContext *ctx, AVFrame *dst,
+                                   const AVFrame *src)
+ {
+@@ -1840,6 +1872,9 @@ static int qsv_transfer_data_from(AVHWFramesContext *ctx, AVFrame *dst,
+     AVFrame *dst_frame;
+     int realigned = 0;
+ 
++    if (qsv_transfer_via_child(ctx))
++        return qsv_transfer_data_child(ctx, dst, src);
++
+     ret = qsv_internal_session_check_init(ctx, 0);
+     if (ret < 0)
+         return ret;
+@@ -1924,6 +1959,9 @@ static int qsv_transfer_data_to(AVHWFramesContext *ctx, AVFrame *dst,
+     const AVFrame *src_frame;
+     int realigned = 0;
+ 
++    if (qsv_transfer_via_child(ctx))
++        return qsv_transfer_data_child(ctx, dst, src);
++
+     ret = qsv_internal_session_check_init(ctx, 1);
+     if (ret < 0)
+         return ret;
