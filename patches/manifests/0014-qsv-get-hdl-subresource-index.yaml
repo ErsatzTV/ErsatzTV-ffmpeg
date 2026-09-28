@@ -44,18 +44,23 @@ notes:
      primary adapter or the runtime reports no device ID. Without it
      -init_hw_device qsv fails with MFX_ERR_NOT_FOUND (-9) and the reproducer
      skips every case."
-  - "NOT VERIFIED: Linux. VA-API pools also use MFX_INFINITE for the index,
-     so this changes the pair Linux runtimes receive (index 0 instead of an
-     untouched field). Also not yet run on a oneVPL 2.x runtime (TGL, Arc),
-     where 0 is the correct subresource of an individual texture."
+  - "LINUX: VA-API pools also use MFX_INFINITE for the index, so this changes
+     the pair Linux runtimes receive (index 0 instead of an untouched field).
+     On Arc with vpl-gpu-rt the reproducer and the ErsatzTV next qsv suite
+     pass with and without the patch (see last_verified), so the change is
+     harmless there. Not run on a legacy libmfx runtime on Linux."
+  - "NOT VERIFIED: a oneVPL 2.x runtime on Windows (TGL and newer, Arc), where
+     0 is the correct subresource of an individual texture."
   - "ErsatzTV next reports it as the 4 canvas cases in the qsv suite on an
      HD 4600 (overlay_qsv of the canvas), which pass with the patch."
 last_verified:
   version: n8.1.2
   date: 2026-09-28
   builds:
-    without_patch: n8.1.2-etv.dev.vplpatch      # win64, patches 0001-0013, patched libvpl
-    with_patch:    n8.1.2-etv.dev.vplpatch-p14  # the same plus this patch
+    without_patch: n8.1.2-etv.dev.vplpatch  # win64 local build, patches 0001-0013 + patched libvpl
+                                            # (no CI build has the libvpl patch without this one)
+    without_patch_linux: n8.1.2-etv.dev.cb938dc6  # linux64 CI build, patches 0001-0013
+    with_patch: n8.1.2-etv.dev.6a76717b     # win64 and linux64 CI builds (main, #56)
   how: >-
     Intel HD Graphics 4600 (Haswell, 8086:0412), Windows 11, driver
     20.19.15.5171, legacy Media SDK runtime API 1.20, D3D11. DXGI adapter 2
@@ -63,7 +68,15 @@ last_verified:
     tests/qsv-get-hdl-subresource-index.sh: without the patch all 4 cases fail
     with "device failed (-17)"; with the patch all 4 pass. n8.1.2-etv.1 skips
     all 4 (-init_hw_device qsv fails, unpatched libvpl).
-    ErsatzTV next qsv canvas tests: 4/4 pass with the patch.
+    ErsatzTV next qsv suite (--test-threads 1) with the patch: the 4 canvas
+    cases pass; 155/264 overall. 104 of the failures are 10-bit hwupload
+    ("Failed to upload frame"), which next's probe must stop routing to QSV
+    on this runtime; the other 5 are the known intermittent hwdownload
+    "Error synchronizing the operation: -17" (1 failure in 20 reruns).
+    Arc A750 (8086:56a1), Arch Linux, i915, vpl-gpu-rt 26.2.4 (libvpl
+    2.17): the reproducer passes all 4 cases and the ErsatzTV next qsv suite
+    (--test-threads 1) passes 264/264, on both the linux64 build without the
+    patch and the one with it.
 remove_when: >-
   Upstream get_hdl callbacks always write the index half of the pair, or the
   legacy runtimes this exists for are no longer supported.

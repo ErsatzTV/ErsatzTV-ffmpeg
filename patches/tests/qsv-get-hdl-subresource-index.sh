@@ -13,6 +13,9 @@
 # pool fails with "Error running VPP: device failed (-17)". The encoder and VPP
 # on decoder surfaces (array textures with real indexes) are unaffected.
 #
+# Linux VA-API with vpl-gpu-rt (verified on Arc) passes every case with or
+# without the patch, so a pass there only shows that the patch does no harm.
+#
 # Cases, all synthetic (lavfi) so no sample file is needed:
 #
 #   upload-vpp     hwupload -> vpp_qsv scale. VPP input is a hwupload surface.
