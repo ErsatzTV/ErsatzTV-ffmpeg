@@ -130,6 +130,8 @@ jobs:
         include:
           - target: macosarm64
             os: macos-15
+          - target: macos64
+            os: macos-15
     env:
       # the image default can change underneath us; the dependency cache key records the build
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
@@ -178,6 +180,8 @@ jobs:
         include:
           - target: macosarm64
             os: macos-15
+          - target: macos64
+            os: macos-15-intel
     env:
       TARGET: ${{ matrix.target }}
     steps:
@@ -199,7 +203,6 @@ jobs:
           [ $# -eq 1 ] || { echo "::error::expected one archive, got: $*"; exit 1; }
           sh scripts/check-native-package.sh "$1" "$TARGET" "$FFMPEG_VERSION" "$FFMPEG_EXTRA_VERSION" pkg
 
-      # the system bash 3.2, as on users' Macs, not Homebrew's
       - name: Readrate regression
         run: |
           /bin/bash patches/tests/readrate-sparse-stream-stall.sh \

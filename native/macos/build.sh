@@ -31,7 +31,9 @@ done
 # D7: docker arm64's list without libv4l2 and fontconfig (libass uses CoreText).
 # Apple frameworks are enabled explicitly so a missed autodetect fails here.
 cd "$src"
-./configure \
+set --
+[ "$cross" = 0 ] || set -- --enable-cross-compile --target-os=darwin
+./configure "$@" \
     --cc=clang \
     --arch="$arch" \
     --pkg-config-flags=--static \
@@ -76,6 +78,19 @@ cd "$src"
     --enable-stripping \
     --extra-version="$(var FFMPEG_EXTRA_VERSION)"
 make -j"$jobs"
+
+# a dependency that misses its assembler or detects the wrong CPU still builds,
+# C-only; the unstripped ffmpeg_g shows which SIMD code was linked
+case "$arch" in
+    x86_64) simd=avx2 ;;
+    arm64) simd=neon ;;
+esac
+nm -j ffmpeg_g > "$work/symbols.txt"
+for lib in x264 x265 dav1d 'vpx|vp8|vp9' 'aom|av1'; do
+    count=$(grep -Ec "^_($lib)_.*_$simd\$" "$work/symbols.txt" || true)
+    [ "$count" -gt 0 ] || { echo "build: no $simd functions from $lib" >&2; exit 1; }
+    echo "build: $lib has $count $simd functions"
+done
 
 name="ffmpeg-n$(var FFMPEG_VERSION)-$(var FFMPEG_EXTRA_VERSION)-$target-gpl-8.1"
 stage="$work/package"
