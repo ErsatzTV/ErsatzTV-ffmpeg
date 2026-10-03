@@ -120,6 +120,94 @@ jobs:
           compression-level: 0
           retention-days: 7
 
+  native-macos:
+    name: Native build (${{ matrix.target }})
+    needs: preflight
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macosarm64
+            os: macos-15
+    env:
+      # the image default can change underneath us; the dependency cache key records the build
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # build tools only; build-deps.sh keeps Homebrew libraries out of the link
+      - name: Build tools
+        run: brew install autoconf automake libtool meson nasm
+
+      - name: Toolchain
+        id: toolchain
+        run: |
+          xcodebuild -version
+          echo "SDK $(xcrun --show-sdk-version)"
+          echo "xcode=$(xcodebuild -version | awk 'NR == 2 { print $3 }')" >> "$GITHUB_OUTPUT"
+
+      - name: Dependency cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: native/macos/work/${{ matrix.target }}/prefix
+          key: macos-deps-${{ matrix.target }}-xcode-${{ steps.toolchain.outputs.xcode }}-${{ hashFiles('native/macos/deps.json', 'native/macos/env.sh', 'native/macos/build-deps.sh') }}
+
+      - name: Build
+        run: sh native/macos/build.sh ${{ matrix.target }} "$COMMIT" dev
+
+      - name: Upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-${{ matrix.target }}
+          path: native/macos/artifacts/ffmpeg-*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  native-macos-test:
+    name: Native test (${{ matrix.target }})
+    needs: native-macos
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macosarm64
+            os: macos-15
+    env:
+      TARGET: ${{ matrix.target }}
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Release variables
+        run: sh scripts/release-vars.sh "$COMMIT" dev >> "$GITHUB_ENV"
+
+      - name: Download
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: native-${{ matrix.target }}
+          path: dist
+
+      - name: Check package
+        run: |
+          set -- dist/ffmpeg-*
+          [ $# -eq 1 ] || { echo "::error::expected one archive, got: $*"; exit 1; }
+          sh scripts/check-native-package.sh "$1" "$TARGET" "$FFMPEG_VERSION" "$FFMPEG_EXTRA_VERSION" pkg
+
+      # the readrate test needs bash 5 (EPOCHREALTIME); macOS ships 3.2
+      - name: Readrate regression
+        run: |
+          brew install bash
+          "$(brew --prefix)/bin/bash" patches/tests/readrate-sparse-stream-stall.sh \
+            "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
+
   native-test:
     name: Native test (${{ matrix.target }})
     needs: native
