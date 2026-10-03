@@ -9,6 +9,7 @@ set -eu
 
 archive=$1
 team=32MB98Q32R
+here=$(cd "$(dirname "$0")" && pwd)
 : "${AC_USERNAME:?}" "${AC_PASSWORD:?}"
 
 name=$(basename "$archive" .tar.xz)
@@ -17,7 +18,13 @@ trap 'rm -rf "$work"' EXIT
 tar -xJf "$archive" -C "$work"
 
 for bin in "$work/$name"/bin/*; do
-    codesign --force --timestamp --options=runtime --sign "Developer ID Application" "$bin"
+    # x86 swscale fast_bilinear generates its scaler code at runtime; the
+    # hardened runtime kills the process when it runs that code
+    set --
+    case "$name/$(basename "$bin")" in
+        *-macos64-gpl-*/ffmpeg) set -- --entitlements "$here/ffmpeg-macos64.entitlements" ;;
+    esac
+    codesign --force --timestamp --options=runtime "$@" --sign "Developer ID Application" "$bin"
     codesign --verify --strict --verbose=2 "$bin"
     codesign -dv --verbose=2 "$bin" 2>&1 | grep -qx "TeamIdentifier=$team" ||
         { echo "sign: $bin is not signed by team $team" >&2; exit 1; }

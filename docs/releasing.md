@@ -30,7 +30,7 @@ If the workflow fails, look at the publish job:
 
 ## Before the first release with a new signing setup
 
-The release workflow signs and notarizes the macOS builds with the Apple organization secrets. Before you tag a release after a change to these secrets, to the certificate, or to [`sign.sh`](../native/macos/sign.sh), do a dry run on `main`:
+The release workflow signs and notarizes the macOS builds with the Apple organization secrets. Before you tag a release after a change to these secrets, to the certificate, or to [`sign.sh`](../native/macos/sign.sh) or the entitlements in [`native/macos/`](../native/macos), do a dry run on `main`:
 
 ```sh
 gh workflow run ci.yml --ref main -f sign=true
