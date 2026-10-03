@@ -16,8 +16,8 @@ fail() {
 }
 
 case "$target" in
-    win64) ext=zip exe=.exe tools="ffmpeg ffprobe ffplay" ;;
-    linux64 | linuxarm64) ext=tar.xz exe='' tools="ffmpeg ffprobe ffplay" ;;
+    win64) ext=zip exe=.exe tools="ffmpeg ffprobe" ;;
+    linux64 | linuxarm64) ext=tar.xz exe='' tools="ffmpeg ffprobe" ;;
     macos64) ext=tar.xz exe='' tools="ffmpeg ffprobe" arch=x86_64 ;;
     macosarm64) ext=tar.xz exe='' tools="ffmpeg ffprobe" arch=arm64 ;;
     *) fail "unknown target '$target'" ;;
@@ -52,6 +52,8 @@ for tool in $tools; do
     [ -f "$root/bin/$tool$exe" ] || fail "missing bin/$tool$exe"
     [ -n "$exe" ] || [ -x "$root/bin/$tool" ] || fail "bin/$tool is not executable"
 done
+# the fork ignores an unknown FF_CONFIGURE_EXTRA, so a lost --disable-ffplay would only show here
+[ ! -e "$root/bin/ffplay$exe" ] || fail "unexpected bin/ffplay$exe"
 
 sh "$here/verify-ffmpeg.sh" "$root/bin" "$version" "$extra"
 

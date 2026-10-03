@@ -75,9 +75,9 @@ Each release has these files:
 | `ersatztv-ffmpeg-<tag>-macos-deps-src.tar` | The source archives of the libraries in the macOS builds, and the `deps.json` that lists them |
 | `SHA256SUMS` | SHA-256 checksums of all the other files |
 
-Each archive has one top-level directory. The directory has `bin/ffmpeg`, `bin/ffprobe`, `bin/ffplay` and `LICENSE.txt`. On Windows, the programs have the `.exe` extension. The macOS archives do not have `ffplay`.
+Each archive has one top-level directory. The directory has `bin/ffmpeg`, `bin/ffprobe` and `LICENSE.txt`. On Windows, the programs have the `.exe` extension.
 
-The macOS programs are signed with the ErsatzTV Developer ID (team `32MB98Q32R`) and notarized by Apple. A program that is not in an app bundle cannot hold its notarization ticket. When macOS checks a downloaded program, it gets the ticket from Apple.
+The macOS programs are signed with the ErsatzTV Developer ID and notarized by Apple. A program that is not in an app bundle cannot hold its notarization ticket. When macOS checks a downloaded program, it gets the ticket from Apple.
 
 The file names keep the same pattern for each release. Tools that find the archive with a pattern, for example `*-linux64-gpl-8.1.tar.xz`, continue to work.
 

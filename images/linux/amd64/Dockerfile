@@ -705,7 +705,6 @@ RUN : "${FFMPEG_EXTRA_VERSION:?build arg required}" && \
     --enable-nvenc \
     --enable-opencl \
     --enable-openssl \
-    --enable-small \
     --enable-stripping \
     --enable-vaapi \
     --enable-vdpau \

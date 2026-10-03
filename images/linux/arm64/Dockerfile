@@ -430,7 +430,6 @@ RUN : "${FFMPEG_EXTRA_VERSION:?build arg required}" && \
     --enable-libxvid \
     --enable-libzimg \
     --enable-openssl \
-    --enable-small \
     --enable-stripping \
     --enable-version3 \
     --extra-version=${FFMPEG_EXTRA_VERSION} \
