@@ -38,8 +38,13 @@ echo "sample:   $sample"
 echo "measuring largest output stall over ${DURATION}s of media at -readrate 1.05 ..."
 
 # timestamps are taken in bash because mawk (the docker images' awk) block-
-# buffers piped stdin, so awk would see every progress line only at exit
-now_us() { local t=${EPOCHREALTIME//[.,]/}; echo $((10#$t)); }
+# buffers piped stdin, so awk would see every progress line only at exit.
+# EPOCHREALTIME needs bash 5; macOS ships bash 3.2, where perl stands in.
+if [ -n "${EPOCHREALTIME:-}" ]; then
+    now_us() { local t=${EPOCHREALTIME//[.,]/}; echo $((10#$t)); }
+else
+    now_us() { perl -MTime::HiRes=time -e 'printf "%d\n", time * 1e6'; }
+fi
 
 result=$(
     "$FFMPEG" -nostdin -hide_banner -nostats -loglevel error -progress - \
@@ -51,7 +56,8 @@ result=$(
         last_media=0 last_wall=0 max_gap=0 at=0
         # both out_time_ms and out_time_us are microseconds
         while IFS='=' read -r key value; do
-            case "$key" in out_time_ms|out_time_us) ;; *) continue ;; esac
+            # not a case statement: bash 3.2 ends $( ) at a case pattern's ")"
+            [[ "$key" == out_time_ms || "$key" == out_time_us ]] || continue
             [[ "$value" =~ ^[0-9]+$ ]] || continue
             media=$((10#$value))
             if (( media > last_media )); then

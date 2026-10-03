@@ -180,8 +180,6 @@ jobs:
             os: macos-15
     env:
       TARGET: ${{ matrix.target }}
-      HOMEBREW_NO_AUTO_UPDATE: 1
-      HOMEBREW_NO_INSTALL_CLEANUP: 1
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -201,11 +199,10 @@ jobs:
           [ $# -eq 1 ] || { echo "::error::expected one archive, got: $*"; exit 1; }
           sh scripts/check-native-package.sh "$1" "$TARGET" "$FFMPEG_VERSION" "$FFMPEG_EXTRA_VERSION" pkg
 
-      # the readrate test needs bash 5 (EPOCHREALTIME); macOS ships 3.2
+      # the system bash 3.2, as on users' Macs, not Homebrew's
       - name: Readrate regression
         run: |
-          brew install bash
-          "$(brew --prefix)/bin/bash" patches/tests/readrate-sparse-stream-stall.sh \
+          /bin/bash patches/tests/readrate-sparse-stream-stall.sh \
             "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
 
   native-test:
