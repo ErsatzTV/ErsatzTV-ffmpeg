@@ -33,9 +33,12 @@ done
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# an 8-bit yuv upscale to a multiple of 32 wide takes x86 swscale's runtime-generated
+# fast_bilinear scaler, which a hardened runtime without an exec-memory entitlement kills
 "$bindir/ffmpeg" -hide_banner -loglevel error -nostdin \
     -f lavfi -i testsrc2=size=320x240:rate=25:duration=1 \
     -f lavfi -i sine=duration=1 \
+    -vf format=yuv420p,scale=640:480:flags=fast_bilinear \
     -c:v libx264 -c:a aac "$tmp/out.mkv"
 streams=$("$bindir/ffprobe" -v error -show_entries stream=codec_name -of csv=p=0 "$tmp/out.mkv" | tr -d '\r' | tr '\n' ' ')
 [ "$streams" = "h264 aac " ] || fail "unexpected streams in test encode: $streams"

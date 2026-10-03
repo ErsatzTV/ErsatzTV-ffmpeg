@@ -79,6 +79,13 @@ for tool in $tools; do
     echo "$info" | grep -qx 'TeamIdentifier=32MB98Q32R' || fail "$tool is not signed by the ErsatzTV Developer ID"
     echo "$info" | grep -Eq '^CodeDirectory .*flags=.*\(runtime\)' || fail "$tool has no hardened runtime"
     echo "$info" | grep -q '^Timestamp=' || fail "$tool has no secure timestamp"
+    expected=''
+    [ "$target/$tool" != macos64/ffmpeg ] ||
+        expected='{"com.apple.security.cs.allow-unsigned-executable-memory":true}'
+    xml=$(codesign -d --entitlements - --xml "$bin" 2>/dev/null || true)
+    got=''
+    [ -z "$xml" ] || got=$(echo "$xml" | plutil -convert json -o - -)
+    [ "$got" = "$expected" ] || fail "$tool has entitlements '$got', expected '$expected'"
     # spctl rejects every bare executable as "not an app"; codesign can ask for the ticket
     codesign --verify --strict --check-notarization -R=notarized "$bin" || fail "$tool is not notarized"
 done

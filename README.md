@@ -77,7 +77,7 @@ Each release has these files:
 
 Each archive has one top-level directory. The directory has `bin/ffmpeg`, `bin/ffprobe` and `LICENSE.txt`. On Windows, the programs have the `.exe` extension.
 
-The macOS programs are signed with the ErsatzTV Developer ID and notarized by Apple. A program that is not in an app bundle cannot hold its notarization ticket. When macOS checks a downloaded program, it gets the ticket from Apple.
+The macOS programs are signed with the ErsatzTV Developer ID and notarized by Apple. A program that is not in an app bundle cannot hold its notarization ticket. When macOS checks a downloaded program, it gets the ticket from Apple. The programs use the hardened runtime. The x86_64 `ffmpeg` has one entitlement, `com.apple.security.cs.allow-unsigned-executable-memory`, because its `fast_bilinear` scaler generates code at runtime.
 
 The file names keep the same pattern for each release. Tools that find the archive with a pattern, for example `*-linux64-gpl-8.1.tar.xz`, continue to work.
 
