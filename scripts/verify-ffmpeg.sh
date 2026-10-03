@@ -1,7 +1,8 @@
 #!/bin/sh
 # Usage: verify-ffmpeg.sh <bin dir> <upstream version> <extra version>
 # Checks a built ffmpeg/ffprobe pair: version banner, GPLv3 (not nonfree)
-# license, built-in aac without libfdk_aac, and a short software encode/probe.
+# license, built-in aac without libfdk_aac, and a short software encode/probe
+# with codec long names and profile names.
 # Windows builds print CRLF; strip it so this also runs under Git Bash.
 set -eu
 
@@ -38,5 +39,8 @@ trap 'rm -rf "$tmp"' EXIT
     -c:v libx264 -c:a aac "$tmp/out.mkv"
 streams=$("$bindir/ffprobe" -v error -show_entries stream=codec_name -of csv=p=0 "$tmp/out.mkv" | tr -d '\r' | tr '\n' ' ')
 [ "$streams" = "h264 aac " ] || fail "unexpected streams in test encode: $streams"
+# --enable-small blanks codec long names and profile names, which ErsatzTV's probes read
+names=$("$bindir/ffprobe" -v error -select_streams v:0 -show_entries stream=codec_long_name,profile -of csv=p=0 "$tmp/out.mkv" | tr -d '\r')
+[ "$names" = "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10,High" ] || fail "missing codec long name or profile: $names"
 
 echo "verify-ffmpeg: ok ($("$bindir/ffmpeg" -hide_banner -version | head -n 1 | tr -d '\r'))"

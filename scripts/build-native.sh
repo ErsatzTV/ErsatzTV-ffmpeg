@@ -18,4 +18,5 @@ FFMPEG_COMMIT=$(var FFMPEG_COMMIT) \
 GIT_BRANCH_OVERRIDE=$(var FFMPEG_TAG) \
 FFBUILD_VERSION_SUFFIX=$(var FFMPEG_EXTRA_VERSION) \
 FFMPEG_PATCHES_DIR="$root/patches" \
+FF_CONFIGURE_EXTRA="--disable-ffplay --disable-sdl2" \
     exec ./build.sh "$target" gpl 8.1

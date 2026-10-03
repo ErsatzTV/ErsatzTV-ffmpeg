@@ -3,11 +3,11 @@
 This repo builds the FFmpeg that [ErsatzTV](https://github.com/ErsatzTV/ErsatzTV) uses. Each release has:
 
 - A docker image for `linux/amd64` and `linux/arm64`.
-- Native builds for `linux64`, `linuxarm64` and `win64`.
+- Native builds for `linux64`, `linuxarm64`, `win64`, `macos64` and `macosarm64`.
 
 The docker images and the native builds use the same patch set. The patches are in [`patches/`](patches). The patches apply in number order.
 
-The docker images are modified versions of the images from [jrottenberg/ffmpeg](https://github.com/jrottenberg/ffmpeg) and [linuxserver/docker-ffmpeg](https://github.com/linuxserver/docker-ffmpeg). The native builds use [ErsatzTV/FFmpeg-Builds](https://github.com/ErsatzTV/FFmpeg-Builds), a fork of [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds).
+The docker images are modified versions of the images from [jrottenberg/ffmpeg](https://github.com/jrottenberg/ffmpeg) and [linuxserver/docker-ffmpeg](https://github.com/linuxserver/docker-ffmpeg). The Linux and Windows native builds use [ErsatzTV/FFmpeg-Builds](https://github.com/ErsatzTV/FFmpeg-Builds), a fork of [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds). The macOS native builds use the recipe in [`native/macos/`](native/macos). This recipe builds the same libraries as the `linux/arm64` docker image.
 
 ## Versions
 
@@ -68,11 +68,16 @@ Each release has these files:
 | `ffmpeg-n<version>-etv.<revision>-linux64-gpl-8.1.tar.xz` | Linux x86_64 |
 | `ffmpeg-n<version>-etv.<revision>-linuxarm64-gpl-8.1.tar.xz` | Linux arm64 (aarch64) |
 | `ffmpeg-n<version>-etv.<revision>-win64-gpl-8.1.zip` | Windows x86_64 |
+| `ffmpeg-n<version>-etv.<revision>-macos64-gpl-8.1.tar.xz` | macOS x86_64 (Intel) |
+| `ffmpeg-n<version>-etv.<revision>-macosarm64-gpl-8.1.tar.xz` | macOS arm64 (Apple silicon) |
 | `ffmpeg-<version>.tar.bz2` | The upstream FFmpeg source release |
 | `ersatztv-ffmpeg-<tag>-src.tar.xz` | This repo and the native build recipe at the release tag |
+| `ersatztv-ffmpeg-<tag>-macos-deps-src.tar` | The source archives of the libraries in the macOS builds, and the `deps.json` that lists them |
 | `SHA256SUMS` | SHA-256 checksums of all the other files |
 
-Each archive has one top-level directory. The directory has `bin/ffmpeg`, `bin/ffprobe`, `bin/ffplay` and `LICENSE.txt`. On Windows, the programs have the `.exe` extension.
+Each archive has one top-level directory. The directory has `bin/ffmpeg`, `bin/ffprobe` and `LICENSE.txt`. On Windows, the programs have the `.exe` extension.
+
+The macOS programs are signed with the ErsatzTV Developer ID and notarized by Apple. A program that is not in an app bundle cannot hold its notarization ticket. When macOS checks a downloaded program, it gets the ticket from Apple.
 
 The file names keep the same pattern for each release. Tools that find the archive with a pattern, for example `*-linux64-gpl-8.1.tar.xz`, continue to work.
 
@@ -83,7 +88,9 @@ These baselines come from the upstream build recipe:
 - Linux: glibc 2.28 or newer, and Linux kernel 4.18 or newer.
 - Windows: Windows 10 22H2 or newer.
 
-CI tests the native builds on GitHub-hosted Ubuntu 24.04 (x86_64 and arm64) and Windows runners. CI does not test other systems.
+The macOS builds are for macOS 15 or newer. The .NET version that ErsatzTV uses has the same baseline.
+
+CI tests the native builds on GitHub-hosted Ubuntu 24.04 (x86_64 and arm64), Windows and macOS 15 (x86_64 and arm64) runners. CI does not test other systems.
 
 ## Verify a release
 
@@ -105,6 +112,13 @@ Download the files that you need and `SHA256SUMS` into one directory. Then do th
 
    ```sh
    gh attestation verify oci://ghcr.io/ersatztv/ersatztv-ffmpeg@sha256:<index digest> --repo ErsatzTV/ErsatzTV-ffmpeg
+   ```
+
+4. On macOS, make sure that the programs are signed and notarized. This step needs a network connection:
+
+   ```sh
+   codesign --verify --strict --check-notarization -R=notarized bin/ffmpeg
+   codesign -dv bin/ffmpeg 2>&1 | grep TeamIdentifier
    ```
 
 The release notes show these commands with the correct digest.
@@ -135,4 +149,4 @@ Make sure that your tool sorts `8.1.2-10` after `8.1.2-9`.
 
 ## License
 
-The builds are GPL version 3 or later. See [LICENSE](LICENSE). Each release includes the upstream FFmpeg source and this repo at the release tag.
+The builds are GPL version 3 or later. See [LICENSE](LICENSE). Each release includes the upstream FFmpeg source, this repo at the release tag, and the source of the libraries in the macOS builds.

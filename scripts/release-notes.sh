@@ -1,13 +1,15 @@
 #!/bin/sh
-# Usage: release-notes.sh <docker index digest>
+# Usage: release-notes.sh <docker index digest> [macOS toolchain dir]
 # Prints GitHub release notes for the revision in release.json: the
 # hand-written release-notes/<tag>.md, then what changed since the previous
 # revision tag (compared numerically, not as SemVer), pins, and verification.
+# The toolchain dir holds one Markdown list item per macOS target, written by
+# the release workflow's build job.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
-index=$1
+index=$1 toolchain=${2:-}
 
 version=$(jq -er '.ffmpeg.version' release.json)
 upstream_tag=$(jq -er '.ffmpeg.tag' release.json)
@@ -37,6 +39,10 @@ echo "- \`ffmpeg -version\`: \`n$version-etv.$revision\` (native), \`$version-et
 echo "- Docker: \`$image:$tag@$index\`"
 echo "- Native toolchain: [ErsatzTV/FFmpeg-Builds@$(git -C native/FFmpeg-Builds rev-parse --short=12 HEAD)](https://github.com/ErsatzTV/FFmpeg-Builds/commit/$(git -C native/FFmpeg-Builds rev-parse HEAD)), dependency images:"
 jq -r '.images | to_entries[] | "  - \(.key): `\(.value)`"' native/images.lock.json
+echo "- macOS: built natively for macOS $(jq -er .deployment_target native/macos/deps.json) and later, static dependencies from [\`native/macos/deps.json\`](https://github.com/ErsatzTV/ErsatzTV-ffmpeg/blob/$tag/native/macos/deps.json): $(jq -r '[.deps[] | "\(.name) \(.version)"] | join(", ")' native/macos/deps.json)"
+if [ -n "$toolchain" ]; then
+    for f in "$toolchain"/*.md; do sed 's/^/  /' "$f"; done
+fi
 echo
 echo "## Patches"
 echo
@@ -66,7 +72,7 @@ echo "gh attestation verify <archive> --repo ErsatzTV/ErsatzTV-ffmpeg"
 echo "gh attestation verify oci://$image@$index --repo ErsatzTV/ErsatzTV-ffmpeg"
 echo '```'
 echo
-echo "Source: \`ffmpeg-$version.tar.bz2\` is the upstream release (sha256 \`$(jq -r '.ffmpeg.tarball_sha256' release.json)\`); \`ersatztv-ffmpeg-$tag-src.tar.xz\` is this repo and the native toolchain submodule at \`$tag\`."
+echo "Source: \`ffmpeg-$version.tar.bz2\` is the upstream release (sha256 \`$(jq -r '.ffmpeg.tarball_sha256' release.json)\`); \`ersatztv-ffmpeg-$tag-src.tar.xz\` is this repo and the native toolchain submodule at \`$tag\`; \`ersatztv-ffmpeg-$tag-macos-deps-src.tar\` is the source of the macOS dependencies."
 if [ -n "${GITHUB_RUN_ID:-}" ]; then
     echo
     echo "Built and tested by [run $GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."

@@ -74,7 +74,6 @@ set --
     --enable-libxvid \
     --enable-libzimg \
     --enable-openssl \
-    --enable-small \
     --enable-stripping \
     --extra-version="$(var FFMPEG_EXTRA_VERSION)"
 make -j"$jobs"
