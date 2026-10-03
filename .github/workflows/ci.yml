@@ -1,9 +1,16 @@
 name: CI
 
 # Builds and tests every docker image and native target without publishing
-# anything; releases come only from release.yml on a tag push.
+# anything; releases come only from release.yml on a tag push. A dispatch with
+# 'sign' also signs and notarizes the macOS builds as release.yml does, to
+# prove the Apple secrets before a tag spends a revision.
 on:
   workflow_dispatch:
+    inputs:
+      sign:
+        description: Sign and notarize the macOS builds (main only, nothing is published)
+        type: boolean
+        default: false
   pull_request:
   push:
     branches:
@@ -25,6 +32,12 @@ jobs:
     runs-on: ubuntu-latest
     if: contains(github.event.head_commit.message, '[no build]') == false
     steps:
+      - name: Check signing dry run
+        if: inputs.sign && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::the signing dry run runs on main only"
+          exit 1
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -161,6 +174,24 @@ jobs:
       - name: Build
         run: sh native/macos/build.sh ${{ matrix.target }} "$COMMIT" dev
 
+      # as release.yml
+      - name: Import signing certificate
+        if: inputs.sign
+        uses: Apple-Actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7.0.0
+        with:
+          p12-file-base64: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
+          p12-password: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
+
+      - name: Sign and notarize
+        if: inputs.sign
+        env:
+          AC_USERNAME: ${{ secrets.AC_USERNAME }}
+          AC_PASSWORD: ${{ secrets.AC_PASSWORD }}
+        run: |
+          set -- native/macos/artifacts/ffmpeg-*
+          [ $# -eq 1 ] || { echo "::error::expected one archive, got: $*"; exit 1; }
+          sh native/macos/sign.sh "$1"
+
       - name: Upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -201,7 +232,8 @@ jobs:
         run: |
           set -- dist/ffmpeg-*
           [ $# -eq 1 ] || { echo "::error::expected one archive, got: $*"; exit 1; }
-          sh scripts/check-native-package.sh "$1" "$TARGET" "$FFMPEG_VERSION" "$FFMPEG_EXTRA_VERSION" pkg
+          sh scripts/check-native-package.sh "$1" "$TARGET" "$FFMPEG_VERSION" "$FFMPEG_EXTRA_VERSION" pkg \
+            ${{ inputs.sign && 'signed' || 'unsigned' }}
 
       - name: Readrate regression
         run: |
