@@ -1,10 +1,10 @@
 {
   "amd64": {
     "recipe": "sha256:c47b42b204881ff3983c5deeb197d5f4c4cfa99086cbc3bda1339f93c3ca9df0",
-    "image": null
+    "image": "ghcr.io/ersatztv/ersatztv-ffmpeg-deps@sha256:1b568f819a5866eede67a0df06da7f5dd23472e234310f74c29735f28db5c051"
   },
   "arm64": {
     "recipe": "sha256:9375ae7b6550208d7599aba982e4848a9db01b700d091c52f591b1a1ceca832c",
-    "image": null
+    "image": "ghcr.io/ersatztv/ersatztv-ffmpeg-deps@sha256:1a50eb2e1e0529a1812c9b7271e1ed7923cd3478106b49f6b06456840feff2a1"
   }
 }
