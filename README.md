@@ -7,7 +7,7 @@ This repo builds the FFmpeg that [ErsatzTV](https://github.com/ErsatzTV/ErsatzTV
 
 The docker images and the native builds use the same patch set. The patches are in [`patches/`](patches). The patches apply in number order.
 
-The docker images are modified versions of the images from [jrottenberg/ffmpeg](https://github.com/jrottenberg/ffmpeg) and [linuxserver/docker-ffmpeg](https://github.com/linuxserver/docker-ffmpeg). The Linux and Windows native builds use [ErsatzTV/FFmpeg-Builds](https://github.com/ErsatzTV/FFmpeg-Builds), a fork of [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds). The macOS native builds use the recipe in [`native/macos/`](native/macos). This recipe builds the same libraries as the `linux/arm64` docker image.
+The docker images are modified versions of the images from [jrottenberg/ffmpeg](https://github.com/jrottenberg/ffmpeg) and [linuxserver/docker-ffmpeg](https://github.com/linuxserver/docker-ffmpeg). They start from dependency images that are built from [`images/linux/`](images/linux) and pinned in [`images/linux/deps.lock.json`](images/linux/deps.lock.json). The Linux and Windows native builds use [ErsatzTV/FFmpeg-Builds](https://github.com/ErsatzTV/FFmpeg-Builds), a fork of [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds). The macOS native builds use the recipe in [`native/macos/`](native/macos). This recipe builds the same libraries as the `linux/arm64` docker image.
 
 ## Versions
 

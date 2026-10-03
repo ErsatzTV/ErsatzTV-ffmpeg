@@ -31,6 +31,9 @@ jobs:
     name: Preflight
     runs-on: ubuntu-latest
     if: contains(github.event.head_commit.message, '[no build]') == false
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Check signing dry run
         if: inputs.sign && github.ref != 'refs/heads/main'
@@ -51,10 +54,23 @@ jobs:
       - name: Check upstream and patch stack
         run: sh scripts/check-upstream.sh "$RUNNER_TEMP/upstream"
 
+      - name: Login to container registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Check docker dependency lock
+        run: sh scripts/check-docker-lock.sh
+
   docker:
     name: Docker (${{ matrix.name }})
     needs: preflight
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: read
     strategy:
       fail-fast: false
       matrix:
@@ -75,7 +91,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Release variables
-        run: sh scripts/release-vars.sh "$COMMIT" dev >> "$GITHUB_ENV"
+        run: |
+          sh scripts/release-vars.sh "$COMMIT" dev >> "$GITHUB_ENV"
+          deps=$(jq -er --arg a "${{ matrix.name }}" '.[$a].image' images/linux/deps.lock.json)
+          echo "DEPS_IMAGE=$deps" >> "$GITHUB_ENV"
+
+      - name: Login to container registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -86,10 +112,9 @@ jobs:
         with:
           context: .
           file: ./images/${{ matrix.platform }}/Dockerfile
-          cache-from: type=gha,scope=docker-${{ matrix.name }}
-          cache-to: type=gha,scope=docker-${{ matrix.name }},mode=max,ignore-error=true
           platforms: ${{ matrix.platform }}
           build-args: |
+            DEPS_IMAGE=${{ env.DEPS_IMAGE }}
             FFMPEG_VERSION=${{ env.FFMPEG_VERSION }}
             FFMPEG_SHA256=${{ env.FFMPEG_SHA256 }}
             FFMPEG_EXTRA_VERSION=${{ env.FFMPEG_EXTRA_VERSION }}

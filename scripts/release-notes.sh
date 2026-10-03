@@ -36,7 +36,8 @@ echo "## Build"
 echo
 echo "- FFmpeg \`$upstream_tag\` (\`$upstream_commit\`), ETV revision $revision"
 echo "- \`ffmpeg -version\`: \`n$version-etv.$revision\` (native), \`$version-etv.$revision\` (docker)"
-echo "- Docker: \`$image:$tag@$index\`"
+echo "- Docker: \`$image:$tag@$index\`, dependency images:"
+jq -r 'to_entries[] | "  - \(.key): `\(.value.image)`"' images/linux/deps.lock.json
 echo "- Native toolchain: [ErsatzTV/FFmpeg-Builds@$(git -C native/FFmpeg-Builds rev-parse --short=12 HEAD)](https://github.com/ErsatzTV/FFmpeg-Builds/commit/$(git -C native/FFmpeg-Builds rev-parse HEAD)), dependency images:"
 jq -r '.images | to_entries[] | "  - \(.key): `\(.value)`"' native/images.lock.json
 echo "- macOS: built natively for macOS $(jq -er .deployment_target native/macos/deps.json) and later, static dependencies from [\`native/macos/deps.json\`](https://github.com/ErsatzTV/ErsatzTV-ffmpeg/blob/$tag/native/macos/deps.json): $(jq -r '[.deps[] | "\(.name) \(.version)"] | join(", ")' native/macos/deps.json)"

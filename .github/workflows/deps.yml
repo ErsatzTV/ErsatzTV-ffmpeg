@@ -1,0 +1,137 @@
+name: Docker dependency images
+
+# Builds images/linux/<arch>/deps.Dockerfile into the images that the docker
+# builds start from, and exports the deps.lock.json that pins them. Nothing
+# commits the lock: copy it from the run summary into images/linux/ on the
+# branch. Runs on a branch push that changes a recipe; dispatch it to pick up a
+# newer Ubuntu base without a recipe change.
+on:
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - 'images/linux/*/deps.Dockerfile'
+      - '.github/workflows/deps.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deps-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/ersatztv/ersatztv-ffmpeg-deps
+
+# No untagged-image cleanup: lock files pin these images by digest, and every
+# build is also tagged <arch>-<commit>-<run> so no digest is ever left untagged.
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: amd64
+            platform: linux/amd64
+            os: ubuntu-latest
+          - name: arm64
+            platform: linux/arm64
+            os: ubuntu-24.04-arm
+    env:
+      ARCH: ${{ matrix.name }}
+    steps:
+      - name: Clean tools folder
+        run: cd /opt && find . -maxdepth 1 -mindepth 1 '!' -path ./containerd '!' -path ./actionarchivecache '!' -path ./runner '!' -path ./runner-cache -exec rm -rf '{}' ';'
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Image variables
+        id: vars
+        run: |
+          echo "recipe=sha256:$(sha256sum "images/linux/$ARCH/deps.Dockerfile" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "runtag=$ARCH-${GITHUB_SHA::12}-${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to container registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # registry cache: no 10 GB limit, and every branch reads the same entries
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: images/linux/${{ matrix.name }}
+          file: images/linux/${{ matrix.name }}/deps.Dockerfile
+          platforms: ${{ matrix.platform }}
+          pull: true
+          push: true
+          provenance: false
+          tags: ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.runtag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.ersatztv.ffmpeg.deps-recipe=${{ steps.vars.outputs.recipe }}
+          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:cache-${{ matrix.name }}
+          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:cache-${{ matrix.name }},mode=max,ignore-error=true
+
+      - name: Record digest
+        env:
+          RECIPE: ${{ steps.vars.outputs.recipe }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::unexpected digest: '$DIGEST'"; exit 1; }
+          mkdir -p lock
+          jq -n --arg a "$ARCH" --arg r "$RECIPE" --arg i "$IMAGE_NAME@$DIGEST" \
+            '{($a): {recipe: $r, image: $i}}' > "lock/$ARCH.json"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lock-${{ matrix.name }}
+          path: lock/${{ matrix.name }}.json
+
+  lock:
+    name: Export image lock
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: lock-*
+          merge-multiple: true
+          path: lock
+
+      - name: Assemble deps.lock.json
+        run: |
+          jq -s add lock/*.json > deps.lock.json
+          jq -e 'keys == ["amd64", "arm64"]' deps.lock.json >/dev/null
+          {
+            echo '### images/linux/deps.lock.json'
+            echo
+            echo '```json'
+            cat deps.lock.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload deps.lock.json
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: deps-lock
+          path: deps.lock.json
