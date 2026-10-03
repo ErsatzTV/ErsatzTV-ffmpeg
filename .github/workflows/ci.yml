@@ -34,6 +34,8 @@ jobs:
     permissions:
       contents: read
       packages: read
+    outputs:
+      build: ${{ steps.build.outputs.build }}
     steps:
       - name: Check signing dry run
         if: inputs.sign && github.ref != 'refs/heads/main'
@@ -43,6 +45,20 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Check release notes
+        run: |
+          tag=$(jq -r '"\(.ffmpeg.version)-\(.revision)"' release.json)
+          [ -f "release-notes/$tag.md" ] || { echo "::error::missing release-notes/$tag.md"; exit 1; }
+
+      # a dispatch always builds; the signing dry run needs the builds
+      - name: Detect build inputs
+        id: build
+        env:
+          BASE: ${{ github.event_name != 'workflow_dispatch' && (github.event.pull_request.base.sha || github.event.before) || '' }}
+        run: sh scripts/needs-build.sh "$BASE" "$COMMIT" >> "$GITHUB_OUTPUT"
 
       # full submodule history: the lock check needs fork_commit as an ancestor
       - name: Fetch native toolchain
@@ -67,6 +83,7 @@ jobs:
   docker:
     name: Docker (${{ matrix.name }})
     needs: preflight
+    if: needs.preflight.outputs.build == 'true'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -131,6 +148,7 @@ jobs:
   native:
     name: Native build (${{ matrix.target }})
     needs: preflight
+    if: needs.preflight.outputs.build == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -161,6 +179,7 @@ jobs:
   native-macos:
     name: Native build (${{ matrix.target }})
     needs: preflight
+    if: needs.preflight.outputs.build == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
