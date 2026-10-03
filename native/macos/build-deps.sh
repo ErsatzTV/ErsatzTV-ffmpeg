@@ -9,11 +9,6 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 target=$1
 . "$root/native/macos/env.sh"
 
-if [ "$cross" = 1 ]; then
-    echo "build-deps: cross-compiling $target is not implemented yet" >&2
-    exit 1
-fi
-
 deps="$root/native/macos/deps.json"
 aux=$(automake --print-libdir)
 sdk=$(xcrun --show-sdk-path)
@@ -42,6 +37,7 @@ refresh_aux() {
 
 autotools() {
     refresh_aux
+    [ "$cross" = 0 ] || set -- --host="$host" "$@"
     ./configure --prefix="$prefix" --enable-static --disable-shared "$@"
     make -j"$jobs"
     make install
@@ -51,6 +47,8 @@ autotools() {
 cmake_configure() {
     src=$1 build=$2
     shift 2
+    # aom and x265 choose their assembly from the processor, not CMAKE_OSX_ARCHITECTURES
+    [ "$cross" = 0 ] || set -- -DCMAKE_SYSTEM_NAME=Darwin -DCMAKE_SYSTEM_PROCESSOR="$arch" "$@"
     cmake -S "$src" -B "$build" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX="$prefix" \
@@ -71,7 +69,14 @@ cmake_build() {
 }
 
 meson_build() {
-    meson setup _build --prefix="$prefix" --libdir=lib --buildtype=release --default-library=static "$@"
+    if [ "$cross" = 1 ]; then
+        # the flags are in the cross file; from the environment they would also reach the build machine
+        env -u CFLAGS -u CXXFLAGS -u CPPFLAGS -u LDFLAGS \
+            meson setup _build --cross-file="$work/meson-cross.ini" --prefix="$prefix" --libdir=lib \
+            --buildtype=release --default-library=static "$@"
+    else
+        meson setup _build --prefix="$prefix" --libdir=lib --buildtype=release --default-library=static "$@"
+    fi
     meson compile -C _build
     meson install -C _build
 }
@@ -231,6 +236,40 @@ Description: libxml2 from the macOS SDK
 Version: $(sed -n 's/^#define LIBXML_DOTTED_VERSION "\(.*\)".*/\1/p' "$sdk/usr/include/libxml2/libxml/xmlversion.h")
 Cflags: -I$sdk/usr/include/libxml2
 Libs: -lxml2
+EOF
+
+# without a cross file meson takes the host for the build machine, and dav1d picks arm64 assembly
+meson_list() { printf "'%s', " "$@" | sed 's/, $//'; }
+cflags=$(meson_list $archflags -I"$prefix/include")
+ldflags=$(meson_list $archflags -L"$prefix/lib")
+cat > "$work/meson-cross.ini" <<EOF
+[binaries]
+c = 'clang'
+cpp = 'clang++'
+objc = 'clang'
+objcpp = 'clang++'
+ar = 'ar'
+strip = 'strip'
+pkg-config = 'pkg-config'
+
+[built-in options]
+c_args = [$cflags]
+cpp_args = [$cflags]
+objc_args = [$cflags]
+objcpp_args = [$cflags]
+c_link_args = [$ldflags]
+cpp_link_args = [$ldflags]
+objc_link_args = [$ldflags]
+objcpp_link_args = [$ldflags]
+
+[properties]
+pkg_config_libdir = '$prefix/lib/pkgconfig'
+
+[host_machine]
+system = 'darwin'
+cpu_family = '$cpu'
+cpu = '$cpu'
+endian = 'little'
 EOF
 
 for name in $(jq -r '.deps[].name' "$deps"); do

@@ -2,10 +2,11 @@
 # here feeds the dependency cache key, so keep ffmpeg-only settings out of it.
 
 case "$target" in
-    macosarm64) arch=arm64 host=aarch64-apple-darwin ;;
-    macos64) arch=x86_64 host=x86_64-apple-darwin ;;
+    macosarm64) arch=arm64 cpu=aarch64 ;;
+    macos64) arch=x86_64 cpu=x86_64 ;;
     *) echo "macos: unknown target '$target'" >&2; exit 1 ;;
 esac
+host=$cpu-apple-darwin
 
 [ "$(uname -s)" = Darwin ] || { echo "macos: must run on macOS" >&2; exit 1; }
 
