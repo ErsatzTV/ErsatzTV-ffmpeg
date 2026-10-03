@@ -128,6 +128,8 @@ build_ogg() {
 }
 
 build_vorbis() {
+    # a PowerPC-era flag that Xcode 16's linker rejects
+    sed -i '' 's/ -force_cpusubtype_ALL//' configure
     autotools --disable-oggtest --disable-docs --disable-examples
 }
 
