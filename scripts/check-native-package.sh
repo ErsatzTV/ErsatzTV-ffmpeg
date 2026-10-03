@@ -3,6 +3,7 @@
 # Checks a native build archive's name and layout, extracts it into <dest>, and
 # runs verify-ffmpeg.sh on it. The name must keep ending in
 # -<target>-gpl-8.1.tar.xz: the Proxmox install script globs for it.
+# macOS targets must be checked on macOS: they add otool/lipo/vtool checks.
 set -eu
 
 archive=$1 target=$2 version=$3 extra=$4 dest=$5
@@ -14,8 +15,10 @@ fail() {
 }
 
 case "$target" in
-    win64) ext=zip exe=.exe ;;
-    linux64 | linuxarm64) ext=tar.xz exe= ;;
+    win64) ext=zip exe=.exe tools="ffmpeg ffprobe ffplay" ;;
+    linux64 | linuxarm64) ext=tar.xz exe='' tools="ffmpeg ffprobe ffplay" ;;
+    macos64) ext=tar.xz exe='' tools="ffmpeg ffprobe" arch=x86_64 ;;
+    macosarm64) ext=tar.xz exe='' tools="ffmpeg ffprobe" arch=arm64 ;;
     *) fail "unknown target '$target'" ;;
 esac
 
@@ -39,9 +42,40 @@ esac
 root="$dest/$name"
 [ -f "$root/LICENSE.txt" ] || fail "missing LICENSE.txt"
 grep -q 'GNU GENERAL PUBLIC LICENSE' "$root/LICENSE.txt" || fail "LICENSE.txt is not the GPL"
-for tool in ffmpeg ffprobe ffplay; do
+for tool in $tools; do
     [ -f "$root/bin/$tool$exe" ] || fail "missing bin/$tool$exe"
     [ -n "$exe" ] || [ -x "$root/bin/$tool" ] || fail "bin/$tool is not executable"
 done
 
 sh "$here/verify-ffmpeg.sh" "$root/bin" "$version" "$extra"
+
+case "$target" in
+    macos*) ;;
+    *) exit 0 ;;
+esac
+
+minos=$(jq -er '.deployment_target' "$here/../native/macos/deps.json")
+for tool in $tools; do
+    bin="$root/bin/$tool"
+    [ "$(lipo -archs "$bin")" = "$arch" ] || fail "$tool is $(lipo -archs "$bin"), expected $arch"
+    # everything else is statically linked; Homebrew or @rpath here means a leak
+    foreign=$(otool -L "$bin" | tail -n +2 | awk '{ print $1 }' |
+        grep -v -E '^(/usr/lib/|/System/Library/Frameworks/)' || true)
+    [ -z "$foreign" ] || fail "$tool links outside the OS: $(echo "$foreign" | tr '\n' ' ')"
+    got=$(vtool -show-build "$bin" | awk '$1 == "minos" { print $2 }')
+    [ "$got" = "$minos" ] || fail "$tool minos is '$got', expected $minos"
+done
+
+# features the build only gets by autodetection or that ErsatzTV depends on
+has() {
+    "$root/bin/ffmpeg" -hide_banner "$1" 2>/dev/null | grep -Eq "$2" || fail "ffmpeg $1 lacks $3"
+}
+has -hwaccels '^videotoolbox$' videotoolbox
+has -encoders ' h264_videotoolbox ' h264_videotoolbox
+has -encoders ' hevc_videotoolbox ' hevc_videotoolbox
+has -encoders ' aac_at ' aac_at
+has -filters ' scale_vt ' scale_vt
+for proto in https tls srt; do
+    has -protocols "^ +$proto\$" "$proto"
+done
+echo "check-native-package: macOS checks ok ($target, minos $minos)"

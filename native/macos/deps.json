@@ -1,0 +1,28 @@
+{
+  "deployment_target": "15.0",
+  "deps": [
+    { "name": "openssl", "version": "3.5.9", "url": "https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz", "sha256": "603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a" },
+    { "name": "freetype", "version": "2.14.3", "url": "https://download.savannah.gnu.org/releases/freetype/freetype-2.14.3.tar.xz", "sha256": "36bc4f1cc413335368ee656c42afca65c5a3987e8768cc28cf11ba775e785a5f" },
+    { "name": "fribidi", "version": "1.0.16", "url": "https://github.com/fribidi/fribidi/releases/download/v1.0.16/fribidi-1.0.16.tar.xz", "sha256": "1b1cde5b235d40479e91be2f0e88a309e3214c8ab470ec8a2744d82a5a9ea05c" },
+    { "name": "harfbuzz", "version": "14.5.1", "url": "https://github.com/harfbuzz/harfbuzz/releases/download/14.5.1/harfbuzz-14.5.1.tar.xz", "sha256": "7e2fa4e8c7c98e8d8140671f5772542afaaa6acccfbd746506886b6d85f7f8d6" },
+    { "name": "libass", "version": "0.17.5", "url": "https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz", "sha256": "2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc" },
+    { "name": "aom", "version": "3.14.1", "url": "https://storage.googleapis.com/aom-releases/libaom-3.14.1.tar.gz", "sha256": "44bf90dbd23e734d50e70a8c41c285193922938bd0d3bc2ee56764d181d55ef5" },
+    { "name": "dav1d", "version": "1.5.3", "url": "https://downloads.videolan.org/pub/videolan/dav1d/1.5.3/dav1d-1.5.3.tar.xz", "sha256": "732010aa5ef461fa93355ed2c6c5fedb48ddc4b74e697eaabe8907eaeb943011" },
+    { "name": "kvazaar", "version": "2.3.2", "url": "https://github.com/ultravideo/kvazaar/releases/download/v2.3.2/kvazaar-2.3.2.tar.xz", "sha256": "35e506a6d2be9ae343f17787eb80fa214492b276e9c88b6e93749050ae380070" },
+    { "name": "lame", "version": "3.100", "url": "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz", "sha256": "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e" },
+    { "name": "ogg", "version": "1.3.5", "url": "https://downloads.xiph.org/releases/ogg/libogg-1.3.5.tar.xz", "sha256": "c4d91be36fc8e54deae7575241e03f4211eb102afb3fc0775fbbc1b740016705" },
+    { "name": "vorbis", "version": "1.3.7", "url": "https://downloads.xiph.org/releases/vorbis/libvorbis-1.3.7.tar.xz", "sha256": "b33cc4934322bcbf6efcbacf49e3ca01aadbea4114ec9589d1b1e9d20f72954b" },
+    { "name": "theora", "version": "1.2.0", "url": "https://downloads.xiph.org/releases/theora/libtheora-1.2.0.tar.xz", "sha256": "ebdf77a8f5c0a8f7a9e42323844fa09502b34eb1d1fece7b5f54da41fe2122ec" },
+    { "name": "opus", "version": "1.6", "url": "https://downloads.xiph.org/releases/opus/opus-1.6.tar.gz", "sha256": "b7637334527201fdfd6dd6a02e67aceffb0e5e60155bbd89175647a80301c92c" },
+    { "name": "opencore-amr", "version": "0.1.6", "url": "https://downloads.sourceforge.net/project/opencore-amr/opencore-amr/opencore-amr-0.1.6.tar.gz", "sha256": "483eb4061088e2b34b358e47540b5d495a96cd468e361050fae615b1809dc4a1" },
+    { "name": "openjpeg", "version": "2.5.4", "url": "https://github.com/uclouvain/openjpeg/archive/refs/tags/v2.5.4.tar.gz", "sha256": "a695fbe19c0165f295a8531b1e4e855cd94d0875d2f88ec4b61080677e27188a" },
+    { "name": "srt", "version": "1.5.5", "url": "https://github.com/Haivision/srt/archive/refs/tags/v1.5.5.tar.gz", "sha256": "c3518bc43a71b5289032395b2db4c3e09e73d78b54247d56c14553a503b491cf" },
+    { "name": "libwebp", "version": "1.6.0", "url": "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0.tar.gz", "sha256": "e4ab7009bf0629fd11982d4c2aa83964cf244cffba7347ecd39019a9e38c4564" },
+    { "name": "vidstab", "version": "1.1.1", "url": "https://github.com/georgmartius/vid.stab/archive/refs/tags/v1.1.1.tar.gz", "sha256": "9001b6df73933555e56deac19a0f225aae152abbc0e97dc70034814a1943f3d4" },
+    { "name": "vpx", "version": "1.16.0", "url": "https://github.com/webmproject/libvpx/archive/refs/tags/v1.16.0.tar.gz", "sha256": "7a479a3c66b9f5d5542a4c6a1b7d3768a983b1e5c14c60a9396edc9b649e015c" },
+    { "name": "x264", "version": "stable-31e19f92", "url": "https://github.com/mirror/x264/archive/31e19f92f00c7003fa115047ce50978bc98c3a0d.tar.gz", "sha256": "d053c9d86988d6bc78237ca5205865c5ddf99c98ef4cd9927eec8f6d388f6dd9" },
+    { "name": "x265", "version": "4.2", "url": "https://bitbucket.org/multicoreware/x265_git/downloads/x265_4.2.tar.gz", "sha256": "40b1ea0453e0309f0eba934e0ddf533f8f6295966679e8894e8f1c1c8d5e1210" },
+    { "name": "xvid", "version": "1.3.7", "url": "https://downloads.xvid.com/downloads/xvidcore-1.3.7.tar.gz", "sha256": "abbdcbd39555691dd1c9b4d08f0a031376a3b211652c0d8b3b8aa9be1303ce2d" },
+    { "name": "zimg", "version": "3.0.6", "url": "https://github.com/sekrit-twc/zimg/archive/refs/tags/release-3.0.6.tar.gz", "sha256": "be89390f13a5c9b2388ce0f44a5e89364a20c1c57ce46d382b1fcc3967057577" }
+  ]
+}
