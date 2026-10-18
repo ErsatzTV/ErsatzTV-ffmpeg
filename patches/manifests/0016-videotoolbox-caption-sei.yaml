@@ -1,0 +1,66 @@
+id: videotoolbox-caption-sei
+patch: 0016-avcodec-videotoolboxenc-remove-caption-sei-merging.patch
+based_on: n8.1.2
+status: carried
+upstream:
+  issue: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/24976
+  commits: []
+dependencies: []
+platforms:
+  - macos-videotoolbox
+reproducer: tests/videotoolbox-caption-sei.sh
+samples:
+  - path: samples/h264-640x480-a53cc.ts
+    sha256: "85eb3904e1332a32849cb74d017da6f154409f7e7053b55dc18c2f8f5c1684b0"
+    # ErsatzTV next fixture 480p_h264_a53cc.ts. Synthetic 2s testsrc2,
+    # h264 High 640x480 30fps + AAC; every video frame carries A53 caption
+    # side data (no decodable caption text).
+failure_without_patch:
+  - "Unexpected end of SEI NAL Unit parsing size."
+  - "Error copying packet data: -1094995529"
+success_with_patch:
+  - "VideoToolbox encode and software decode complete without SEI errors"
+  - "Decoded output frames retain ATSC A53 closed-caption side data"
+notes:
+  - >-
+    Carries gnattu's existing repair from jellyfin/jellyfin-ffmpeg PR 788,
+    merged as e965dc63b4642af56f1d48b0a8b5d5f103440bfa on 2026-10-14.
+    The patch body is unchanged from Jellyfin's
+    debian/patches/0101-fix-videotoolbox-closed-caption-sei.patch.
+  - >-
+    Caption merging parses existing VideoToolbox SEI without accounting for
+    emulation-prevention bytes. Older FFmpeg returned a stale success code
+    after this parse failed; newer error propagation makes the same defect
+    fatal. The repair leaves existing SEI untouched and emits A53 captions
+    in a separate SEI NAL before the first slice. It does not disable captions
+    or revert error reporting.
+  - >-
+    Upstream master 94cba3150c6b83057ed48b833689adc806715cc0 still contained
+    the old merging path when checked. Remove this carry when the selected
+    upstream source includes the repair.
+last_verified:
+  version: n8.1.2
+  date: 2026-10-17
+  builds:
+    without_patch: n8.1.2-etv.4
+    with_patch: n8.1.2-etv.dev.d696f2e4  # macosarm64, patches 0001-0016
+  how: >-
+    Apple M1, macOS 27.0.1 (26A434), full release configuration from
+    native/macos/build.sh. tests/videotoolbox-caption-sei.sh with the bundled
+    sample: etv.4 fails with exit 183 ("Unexpected end of SEI NAL Unit
+    parsing size."); the patched build passes with no SEI warnings and all
+    60 output frames carry A53 caption side data.
+    Earlier diagnostic run with a private captioned sample: Apple M1 Max,
+    macOS 27.2 (26B5112a). Local arm64 control and patched builds used identical clang/configure settings, built-in codecs and Apple
+    frameworks, and ErsatzTV patches 0001-0015. The patched build added only
+    this patch. These were focused diagnostic builds, not the full release
+    dependency configuration. The five-second H264/A53 reproducer failed
+    with exit 183 before the patch; afterward encode/decode completed with
+    no warnings and 149 output frames carried A53 caption side data.
+    Three 60-second runs of the original Tunarr-generated SDR command
+    completed with 1798 frames each; median elapsed time was 9.249 seconds.
+    A 12-second capture through custom Tunarr had no playback or decode
+    errors and all 360 decoded frames carried A53 caption side data.
+    Caption text rendering, Intel Macs and other macOS versions were not
+    tested.
+remove_when: "The pinned upstream FFmpeg source includes the VideoToolbox caption SEI repair"
