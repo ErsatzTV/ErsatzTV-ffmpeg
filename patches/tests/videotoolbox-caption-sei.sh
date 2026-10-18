@@ -1,12 +1,17 @@
 #!/bin/sh
 # Reproduce the observed VideoToolbox A53 SEI merge failure on macOS.
-# Usage: videotoolbox-caption-sei.sh FFMPEG FFPROBE CAPTIONED_INPUT NEW_OUTPUT_DIR
-# Supply a local H264 file with embedded A53 captions; no media is distributed.
-# START_SECONDS defaults to 30. Output is retained for inspection.
+# Usage: videotoolbox-caption-sei.sh FFMPEG FFPROBE NEW_OUTPUT_DIR [CAPTIONED_INPUT]
+# CAPTIONED_INPUT defaults to samples/h264-640x480-a53cc.ts; any local H264 file
+# with embedded A53 captions also works. START_SECONDS defaults to 0.
+# Output is retained for inspection.
 set -eu
-[ "$#" -eq 4 ] || { echo "Usage: $0 FFMPEG FFPROBE CAPTIONED_INPUT NEW_OUTPUT_DIR" >&2; exit 2; }
-ffmpeg=$1 ffprobe=$2 input=$3 out=$4
-start=${START_SECONDS:-30}
+[ "$#" -eq 3 ] || [ "$#" -eq 4 ] || {
+    echo "Usage: $0 FFMPEG FFPROBE NEW_OUTPUT_DIR [CAPTIONED_INPUT]" >&2; exit 2;
+}
+here=$(cd "$(dirname "$0")" && pwd)
+ffmpeg=$1 ffprobe=$2 out=$3
+input=${4:-$here/../samples/h264-640x480-a53cc.ts}
+start=${START_SECONDS:-0}
 mkdir "$out"
 "$ffprobe" -v error -select_streams v:0 -read_intervals "$start%+5" \
     -show_frames -show_entries frame=side_data_list -of json "$input" > "$out/input-frames.json"
