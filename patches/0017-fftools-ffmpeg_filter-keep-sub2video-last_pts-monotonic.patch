@@ -7,11 +7,11 @@ index 765b65d..db22bdb 100644
  
      av_assert1(frame->data[0]);
 -    ifp->sub2video.last_pts = frame->pts = pts;
-+    frame->pts = pts;
 +    /* A subpicture can start behind the latest heartbeat. Do not move last_pts
 +       back, or every heartbeat up to the old value (one per audio packet) pushes
-+       the canvas again. */
-+    ifp->sub2video.last_pts = FFMAX(ifp->sub2video.last_pts, pts);
++       the canvas again. Push it at last_pts instead: at its own pts it can fall
++       before an input trim (-ss) and be dropped. */
++    ifp->sub2video.last_pts = frame->pts = FFMAX(ifp->sub2video.last_pts, pts);
      ret = av_buffersrc_add_frame_flags(ifp->ifilter.filter, frame,
                                         AV_BUFFERSRC_FLAG_KEEP_REF |
                                         AV_BUFFERSRC_FLAG_PUSH);
