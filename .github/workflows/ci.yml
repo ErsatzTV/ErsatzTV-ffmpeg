@@ -145,6 +145,12 @@ jobs:
           docker run --rm --entrypoint bash -v "$PWD/patches:/patches:ro" ersatztv-ffmpeg:ci \
             /patches/tests/readrate-sparse-stream-stall.sh /usr/local/bin/ffmpeg
 
+      - name: Sub2video regression
+        if: matrix.test
+        run: |
+          docker run --rm --entrypoint bash -v "$PWD/patches:/patches:ro" ersatztv-ffmpeg:ci \
+            /patches/tests/sub2video-heartbeat-burst.sh /usr/local/bin/ffmpeg
+
   native:
     name: Native build (${{ matrix.target }})
     needs: preflight
@@ -284,6 +290,11 @@ jobs:
           /bin/bash patches/tests/readrate-sparse-stream-stall.sh \
             "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
 
+      - name: Sub2video regression
+        run: |
+          /bin/bash patches/tests/sub2video-heartbeat-burst.sh \
+            "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
+
   native-test:
     name: Native test (${{ matrix.target }})
     needs: native
@@ -328,3 +339,7 @@ jobs:
       - name: Readrate regression
         if: matrix.readrate
         run: patches/tests/readrate-sparse-stream-stall.sh "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
+
+      - name: Sub2video regression
+        if: matrix.readrate
+        run: patches/tests/sub2video-heartbeat-burst.sh "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"

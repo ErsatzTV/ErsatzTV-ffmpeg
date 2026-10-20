@@ -181,6 +181,14 @@ jobs:
           docker run --rm --entrypoint bash -v "$PWD/patches:/patches:ro" "$IMAGE_NAME@$DIGEST" \
             /patches/tests/readrate-sparse-stream-stall.sh /usr/local/bin/ffmpeg
 
+      - name: Sub2video regression
+        if: matrix.test
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          docker run --rm --entrypoint bash -v "$PWD/patches:/patches:ro" "$IMAGE_NAME@$DIGEST" \
+            /patches/tests/sub2video-heartbeat-burst.sh /usr/local/bin/ffmpeg
+
       - name: Attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -359,6 +367,11 @@ jobs:
           /bin/bash patches/tests/readrate-sparse-stream-stall.sh \
             "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
 
+      - name: Sub2video regression
+        run: |
+          /bin/bash patches/tests/sub2video-heartbeat-burst.sh \
+            "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
+
   native-test:
     name: Native test (${{ matrix.target }})
     needs: native
@@ -405,6 +418,10 @@ jobs:
       - name: Readrate regression
         if: matrix.readrate
         run: patches/tests/readrate-sparse-stream-stall.sh "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
+
+      - name: Sub2video regression
+        if: matrix.readrate
+        run: patches/tests/sub2video-heartbeat-burst.sh "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
 
   publish:
     name: Publish prerelease

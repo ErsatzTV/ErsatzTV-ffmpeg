@@ -1,0 +1,69 @@
+id: sub2video-heartbeat-burst
+patch: 0017-fftools-ffmpeg_filter-keep-sub2video-last_pts-monotonic.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  commits: []
+  # Not reported. sub2video_push_ref() and sub2video_heartbeat() are unchanged
+  # between n8.1.2 and origin/master as of 2026-10-07. Stock n9.0.2 (Arch) fails
+  # the reproducer (ratio 3.61).
+dependencies: []
+platforms:
+  - all                       # fftools sub2video logic; no platform or hwaccel involvement
+reproducer: tests/sub2video-heartbeat-burst.sh
+samples:
+  - path: samples/dvdsub-sparse-gaps-h264.mkv
+    sha256: "deec0b63a4792b9b94cc368e310b656d45c4418b2d15e5b1ff29552d2221a8a6"
+    # Shared with readrate-sparse-stream-stall. The reproducer remuxes it with a
+    # synthetic 40-sample PCM track (1200 packets/s, like TrueHD) into a temp
+    # dir; the h264 B-frames give the video pts lead the bug needs.
+failure_without_patch:
+  - "after the first cue, every audio packet re-pushes the sub2video canvas"
+  - "reproducer counts ~913 sub2video frames with audio vs ~250 video only (ratio ~3.6) and exits 1"
+success_with_patch:
+  - "audio packets add no burst; sub2video output is otherwise unchanged"
+  - "reproducer counts ~273 frames with audio vs ~234 video only (ratio ~1.2) and exits 0"
+notes:
+  - "MECHANISM: demux_send() sends a sub2video heartbeat for every packet of
+     the subtitle's input file. sub2video_heartbeat() drops heartbeats with
+     pts <= last_pts and pushes the cached canvas for the rest. Before the first
+     cue, decode-order video pts (ahead of audio) keep last_pts ahead and audio
+     heartbeats are dropped. sub2video_push_ref() then set last_pts to the
+     pushed pts. A cue, or the blank canvas at its end, is pushed at its own
+     pts, which is behind that lead, so last_pts went backwards. Every audio
+     heartbeat up to the old value then pushed the canvas again, at the audio
+     packet rate. The patch keeps last_pts at the maximum; the pushed frame's
+     pts is unchanged. last_pts is only read by the heartbeat skip."
+  - "Symptom in ErsatzTV next (next#339): 4K HDR remux with TrueHD and PGS on
+     QSV. On an N100 throughput dropped from 55 to 28 fps after the first
+     subtitle. Each extra push is a 1920x1080 BGRA scale, pad and hwupload
+     that overlay_qsv then discards. Throughput before the first subtitle was
+     already fixed by next#340 (-canvas_size for PGS of unknown size)."
+  - "Workaround without a rebuild: read the audio from a second -i of the same
+     file, so the subtitle's input has no audio packets. It reads the file
+     twice, which is bad for remote media-server sources."
+  - "FATE fate-sub2video, fate-sub2video_basic and fate-sub2video_time_limited
+     pass unchanged, but none reaches this path: their subtitle input has no
+     other demuxed streams."
+last_verified:
+  version: n8.1.2
+  date: 2026-10-20
+  builds:
+    without_patch: n8.1.2-etv.4
+    with_patch: n8.1.2-etv.dev.f996b919   # linux64, patches 0001-0016 (main) + this patch
+  how: >-
+    Reproducer on Linux x86_64: etv.4 913/250 (ratio 3.65), exit 1; patched
+    273/234 (1.17), exit 0. Intel N100, 60 s stream copy of a 4K HEVC PQ remux
+    with TrueHD and PGS (no PGS size, first cue at 39.2 s). Sub2video frames per
+    5 s window after the first cue went from 84/211/420/127 to 44/46/48/46.
+    Full next-style QSV pipeline (vpp_qsv tonemap, PGS scale+pad+hwupload,
+    overlay_qsv, h264_qsv, HLS, -canvas_size 1920x1080, 55 s): wall 30.3 s ->
+    24.1 s; fps after the first subtitle 28 -> 55.3, same as before it.
+    Software overlay render of 36-56 s (framemd5, 479 video frames plus audio)
+    is byte-identical between etv.4 and the patched build. FATE on a plain
+    configure of n8.1.2 + 0001-0016 with and without this patch: the three
+    sub2video tests pass on both, and the full sample-free suite (2736 tests)
+    passes with the patch. Other platforms not run; the code is
+    platform-independent.
+remove_when: "An equivalent upstream fix is present and the unpatched reproducer passes"
