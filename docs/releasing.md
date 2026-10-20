@@ -4,7 +4,7 @@ These steps are for maintainers.
 
 ## Make a release
 
-1. Increase `revision` in [`release.json`](../release.json). For a new FFmpeg version, also change the version, tag, commit and tarball checksum, and set `revision` to 1. Make sure that all patches apply to the new version.
+1. Increase `revision` in [`release.json`](../release.json). For a new FFmpeg version, also change the version, tag, commit and tarball checksum, and set `revision` to 1. Make sure that all patches apply to the new version. If the release adds or changes a patch, or changes the FFmpeg version, [run the FATE sweep](#run-the-fate-sweep).
 2. Add `release-notes/<tag>.md`. Write the changes that users can see.
 3. Merge to `main`. Make sure that CI passes. CI checks that `release-notes/<tag>.md` exists. A change to only the revision, the release notes or the docs does not build anything, because it does not change the builds. Then the builds of the previous `main` commit must have passed.
 4. Tag the `native/FFmpeg-Builds` submodule commit in the fork as `etv/<tag>`. The release workflow stops if this tag is missing or points to a different commit. A ruleset prevents changes to `etv/*` tags, so do this step immediately before the next step.
@@ -37,6 +37,20 @@ gh workflow run ci.yml --ref main -f sign=true
 ```
 
 The dry run signs and notarizes the macOS builds and checks the signatures. It does not publish anything.
+
+## Run the FATE sweep
+
+[FATE](https://ffmpeg.org/fate.html) is the FFmpeg test suite. The sweep runs it with and without the patch set, and shows the tests that fail only with the patches. Run it on a Linux computer with a C compiler, `nasm`, `make`, `rsync`, `curl` and `jq`:
+
+```sh
+sh scripts/fate-sweep.sh <new empty directory outside the repo>
+```
+
+The script keeps the FATE samples (approximately 1.4 GB) in `~/.cache/ersatztv-ffmpeg/fate-suite`. The first run downloads them. A run takes approximately 10 minutes on a 12-thread computer, most of it for the two builds.
+
+The script exits with 0 if no test fails only with the patches. If a test fails only with the patches, the script lists it and exits with 1. The test output is in `<directory>/patched/tests/data/fate/<test>.err` and `.diff`.
+
+FATE uses a plain configure without hardware libraries, so it does not test the hardware patches. Use the reproducers in [`patches/tests/`](../patches/tests) and the ErsatzTV Next integration tests for those.
 
 ## Test the macOS builds on hardware
 
