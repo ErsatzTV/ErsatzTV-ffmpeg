@@ -25,6 +25,8 @@ ENV AOM=v3.12.0 \
     OPENCOREAMR=0.1.6 \
     OPENJPEG=2.5.3 \
     OPUS=1.5.2 \
+    RKMPP=a9380ef333102ac318628f83b5f7a460d377749e \
+    RKRGA=1d330cc28551943bed3380261a5a9c6fbd58ff53 \
     THEORA=1.1.1 \
     VORBIS=1.3.7 \
     VPX=1.15.0 \
@@ -51,6 +53,7 @@ RUN apt-get -yqq update && \
     libexpat1-dev \
     libxext-dev \
     libgcc-9-dev \
+    libdrm-dev \
     libgomp1 \
     libharfbuzz-dev \
     libpciaccess-dev \
@@ -337,6 +340,34 @@ RUN cd /tmp/vpx && \
     --enable-vp9-highbitdepth && \
     make && \
     make install
+
+# rkmpp and rkrga: jellyfin's pins (branches jellyfin-mpp-next, jellyfin-rga-next)
+RUN mkdir -p /tmp/rkmpp && cd /tmp/rkmpp && \
+    git init -q && \
+    git fetch --depth 1 https://github.com/nyanmisaka/rk-mirrors.git ${RKMPP} && \
+    git checkout -q FETCH_HEAD
+# the repo already has a build/ directory
+RUN mkdir /tmp/rkmpp/rkmpp_build && cd /tmp/rkmpp/rkmpp_build && \
+    cmake \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=ON \
+    -DBUILD_TEST=OFF .. && \
+    make && \
+    make install
+
+RUN mkdir -p /tmp/rkrga && cd /tmp/rkrga && \
+    git init -q && \
+    git fetch --depth 1 https://github.com/nyanmisaka/rk-mirrors.git ${RKRGA} && \
+    git checkout -q FETCH_HEAD
+RUN cd /tmp/rkrga && \
+    meson setup rkrga_build \
+    --buildtype=release \
+    --default-library=shared \
+    --libdir /usr/local/lib \
+    -Dcpp_args=-fpermissive \
+    -Dlibdrm=false \
+    -Dlibrga_demo=false && \
+    ninja -C rkrga_build install
 
 # x264
 RUN mkdir -p /tmp/x264 && \

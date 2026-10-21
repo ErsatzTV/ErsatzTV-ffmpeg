@@ -57,6 +57,26 @@ done
 
 sh "$here/verify-ffmpeg.sh" "$root/bin" "$version" "$extra"
 
+# features the build only gets by autodetection or that ErsatzTV depends on
+has() {
+    "$root/bin/ffmpeg" -hide_banner "$1" 2>/dev/null | grep -Eq "$2" || fail "ffmpeg $1 lacks $3"
+}
+
+if [ "$target" = linuxarm64 ]; then
+    has -hwaccels '^rkmpp$' rkmpp
+    has -encoders ' h264_rkmpp ' h264_rkmpp
+    has -encoders ' hevc_rkmpp ' hevc_rkmpp
+    has -decoders ' hevc_rkmpp ' hevc_rkmpp
+    for f in scale_rkrga vpp_rkrga overlay_rkrga; do
+        has -filters " $f " "$f"
+    done
+    has -pix_fmts ' nv15 ' nv15
+    # mpp and rga are static; next dlopens the host's librockchip_mpp.so.1 on its own
+    needed=$(readelf -d "$root/bin/ffmpeg" | grep -E 'NEEDED.*(rockchip_mpp|librga)' || true)
+    [ -z "$needed" ] || fail "ffmpeg links mpp/rga dynamically: $needed"
+    echo "check-native-package: rkmpp checks ok"
+fi
+
 case "$target" in
     macos*) ;;
     *) exit 0 ;;
@@ -90,10 +110,6 @@ for tool in $tools; do
     codesign --verify --strict --check-notarization -R=notarized "$bin" || fail "$tool is not notarized"
 done
 
-# features the build only gets by autodetection or that ErsatzTV depends on
-has() {
-    "$root/bin/ffmpeg" -hide_banner "$1" 2>/dev/null | grep -Eq "$2" || fail "ffmpeg $1 lacks $3"
-}
 has -hwaccels '^videotoolbox$' videotoolbox
 has -encoders ' h264_videotoolbox ' h264_videotoolbox
 has -encoders ' hevc_videotoolbox ' hevc_videotoolbox

@@ -35,6 +35,7 @@ RUN : "${FFMPEG_EXTRA_VERSION:?build arg required}" && \
     --enable-libaom \
     --enable-libdav1d \
     --enable-libass \
+    --enable-libdrm \
     --enable-libfreetype \
     --enable-libharfbuzz \
     --enable-libkvazaar \
@@ -56,6 +57,8 @@ RUN : "${FFMPEG_EXTRA_VERSION:?build arg required}" && \
     --enable-libxvid \
     --enable-libzimg \
     --enable-openssl \
+    --enable-rkmpp \
+    --enable-rkrga \
     --enable-stripping \
     --enable-version3 \
     --extra-version=${FFMPEG_EXTRA_VERSION} \
@@ -95,6 +98,10 @@ ARG FFMPEG_VERSION
 ARG FFMPEG_EXTRA_VERSION
 RUN --mount=type=bind,source=scripts/verify-ffmpeg.sh,target=/tmp/verify-ffmpeg.sh \
     sh /tmp/verify-ffmpeg.sh /usr/local/bin "${FFMPEG_VERSION}" "${FFMPEG_EXTRA_VERSION}"
+# next's rkmpp capability probe dlopens this by soname
+RUN ldd /usr/local/bin/ffmpeg | grep -q 'librockchip_mpp.so.1 => /' && \
+    ffmpeg -hide_banner -hwaccels | grep -qx rkmpp && \
+    ffmpeg -hide_banner -filters | grep -q ' scale_rkrga '
 
 CMD         ["--help"]
 ENTRYPOINT  ["ffmpeg"]
