@@ -1,0 +1,64 @@
+id: rkmpp-rkrga
+patch: 0018-lavc-lavu-lavfi-lsws-add-rkmpp-rkrga-hardware-pipeline.patch
+based_on: n8.1.2
+status: carried
+upstream:
+  # Rockchip's MPP/RGA pipeline is maintained out of tree and is not headed
+  # for FFmpeg upstream.
+  source: https://github.com/jellyfin/jellyfin-ffmpeg/blob/e965dc63b4642af56f1d48b0a8b5d5f103440bfa/debian/patches/0042-add-full-hwa-pipeline-for-rockchip-rk3588-platform.patch
+  tracks: https://github.com/nyanmisaka/ffmpeg-rockchip/tree/d90e3a1c18d7929383cf88c1b3da2e2d1c966cbf  # branch 8.1
+  commits: []
+dependencies: []
+platforms:
+  - linux-arm64-rkmpp         # enabled only by the linuxarm64 native and
+                              # docker linux/arm64 builds
+reproducer: null              # hardware gate is next's rkmpp integration suite
+samples: []
+notes:
+  - >-
+    Jellyfin's 0042 is ahead of ffmpeg-rockchip's 8.1 branch (rkmppdec HDR
+    metadata via ff_decode_*_new, an rkmppenc mpp_packet_get_pos fix, small
+    rkrga fixes), so it is the source. Its rk files are unchanged here.
+  - >-
+    Two hunks were resolved by hand against n8.1.2 + 0001-0017. configure:
+    the mjpeg/mpeg1/mpeg2 *_rkmpp_* deps lines, whose context moved because of
+    0011's mpeg2_amf_decoder_deps. libavutil/hwcontext.h:
+    AV_HWDEVICE_TYPE_RKMPP goes after AV_HWDEVICE_TYPE_OHCODEC, because the
+    AV_HWDEVICE_TYPE_NB context comes from jellyfin's 0011 (QSV derived
+    devices), which is not carried. 0042 never uses _NB.
+  - >-
+    ETV deviation from jellyfin: libswscale/swscale_unscaled.c keeps NV15/NV20
+    sources out of the "simple copy" fast path. NV15 is planar and
+    semi-planar, so NV15 -> nv12/p010 matched planarCopyWrapper and was
+    byte-copied (SSIM 0.01 against a software decode). next's
+    pad_color 1080p_hevc_10_bt2020_4x3 -> 1920x1080 h264 case hits it:
+    hwdownload,format=nv15,scale (no-op at 1440x1080),pad negotiates p010.
+    jellyfin-ffmpeg7 7.1.4 does not have the problem; report it to
+    nyanmisaka/ffmpeg-rockchip and drop this hunk once the source fixes it.
+  - >-
+    Not Rockchip-only: it inserts NV20LE/NV20BE into enum AVPixelFormat
+    (renumbering later formats, harmless for static builds), appends NV15/NV20,
+    adds swscale input for them, and updates the imgutils and
+    sws-pixdesc-query FATE refs. Every target compiles these, so FATE must stay
+    green everywhere.
+  - >-
+    configure: rkmpp requires libdrm, rkrga requires rkmpp. Both are
+    version3 (mpp and librga are Apache-2.0).
+  - >-
+    Libraries are pinned to jellyfin's: nyanmisaka/rk-mirrors
+    jellyfin-mpp-next @ a9380ef333102ac318628f83b5f7a460d377749e and
+    jellyfin-rga-next @ 1d330cc28551943bed3380261a5a9c6fbd58ff53. Native links
+    both statically; docker links both shared so the image carries the same
+    librockchip_mpp.so.1 that next dlopens for its capability probe.
+  - >-
+    Refresh: on each jellyfin-ffmpeg release, diff its 0042 against this patch
+    and the rk files (libavcodec/rkmpp*, libavutil/hwcontext_rkmpp*,
+    libavfilter/*rkrga*). Re-pin the libraries when jellyfin's builder does.
+last_verified:
+  version: n8.1.2
+  date: null                  # set when the Orange Pi gate passes
+  builds:
+    with_patch: null
+  how: null
+remove_when: >-
+  Rockchip support is dropped, or the pipeline lands upstream.
