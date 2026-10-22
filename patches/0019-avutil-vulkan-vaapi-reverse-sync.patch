@@ -1,14 +1,28 @@
 From: TacoRocket
-Subject: [PATCH] avutil: wait for Vulkan writes before reverse mapping to VAAPI
+Subject: [PATCH] avutil/hwcontext: wait for Vulkan writes before a reverse
+ unmap to VAAPI
 
-Reverse mapping returns the original VAAPI frame without waiting for pending
-Vulkan work. The delayed mapping destructor may not run before the encoder
-reads the surface. Wait for the frame timeline before returning this mapping;
-keep frames in GPU memory and leave other mapping pairs unchanged.
+A reverse hwmap (hwmap=derive_device=vaapi:reverse=1) hands Vulkan
+filters frames that are mappings of VAAPI surfaces, and the unmap in
+av_hwframe_map() returns the original VAAPI surface without waiting for
+the Vulkan work that wrote it. The mapping's own wait only runs when its
+last reference is dropped, so the encoder can read the surface while
+Vulkan is still writing it: displaced fragments on motion and cuts, with
+no errors reported.
 
+Wait on the frame's timeline semaphores before returning the VAAPI
+surface. Pixels stay on the GPU; other mapping pairs are unchanged.
+---
+ libavutil/hwcontext.c          |  8 ++++++++
+ libavutil/hwcontext_internal.h |  6 ++++++
+ libavutil/hwcontext_vulkan.c   | 30 ++++++++++++++++++++++++++++++
+ 3 files changed, 44 insertions(+)
+
+diff --git a/libavutil/hwcontext.c b/libavutil/hwcontext.c
+index 6cdee71..55ca87e 100644
 --- a/libavutil/hwcontext.c
 +++ b/libavutil/hwcontext.c
-@@ -821,6 +821,14 @@
+@@ -821,6 +821,14 @@ int av_hwframe_map(AVFrame *dst, const AVFrame *src, int flags)
                  return AVERROR(EINVAL);
              }
              hwmap = (HWMapDescriptor*)src->buf[0]->data;
@@ -23,9 +37,28 @@ keep frames in GPU memory and leave other mapping pairs unchanged.
              return av_frame_replace(dst, hwmap->source);
          }
      }
+diff --git a/libavutil/hwcontext_internal.h b/libavutil/hwcontext_internal.h
+index 04a0a5c..eacb569 100644
+--- a/libavutil/hwcontext_internal.h
++++ b/libavutil/hwcontext_internal.h
+@@ -151,6 +151,12 @@ int ff_hwframe_map_create(AVBufferRef *hwframe_ref,
+  */
+ int ff_hwframe_map_replace(AVFrame *dst, const AVFrame *src);
+ 
++/**
++ * Wait for pending Vulkan work on a frame, used before a reverse mapping
++ * hands the original VAAPI surface back to its consumer.
++ */
++int ff_vulkan_wait_frame(const AVFrame *src);
++
+ extern const HWContextType ff_hwcontext_type_cuda;
+ extern const HWContextType ff_hwcontext_type_d3d11va;
+ extern const HWContextType ff_hwcontext_type_d3d12va;
+diff --git a/libavutil/hwcontext_vulkan.c b/libavutil/hwcontext_vulkan.c
+index e80ab45..b0ee256 100644
 --- a/libavutil/hwcontext_vulkan.c
 +++ b/libavutil/hwcontext_vulkan.c
-@@ -2406,6 +2406,36 @@
+@@ -2406,6 +2406,36 @@ static void vulkan_free_internal(AVVkFrame *f)
      av_freep(&f->internal);
  }
  
@@ -62,14 +95,3 @@ keep frames in GPU memory and leave other mapping pairs unchanged.
  static void vulkan_frame_free(AVHWFramesContext *hwfc, AVVkFrame *f)
  {
      VulkanDevicePriv *p = hwfc->device_ctx->hwctx;
---- a/libavutil/hwcontext_internal.h
-+++ b/libavutil/hwcontext_internal.h
-@@ -167,4 +167,8 @@
- extern const HWContextType ff_hwcontext_type_oh;
- extern const HWContextType ff_hwcontext_type_rkmpp;
- 
-+#if CONFIG_VULKAN
-+int ff_vulkan_wait_frame(const AVFrame *src);
-+#endif
-+
- #endif /* AVUTIL_HWCONTEXT_INTERNAL_H */

@@ -4,58 +4,63 @@ based_on: n8.1.2
 status: local
 upstream:
   issue: null
+  # Not reported. av_hwframe_map() in FFmpeg master (17ec998942) still returns
+  # hwmap->source for an unmap without synchronising. The DRM-import
+  # wait-stage proposal (ffmpeg-devel PR25161) does not fix this reproduction.
   commits: []
 dependencies: []
 platforms:
-  - linux-intel-vulkan-vaapi
-reproducer: ../docs/vulkan-vaapi-reverse-sync.md
-samples: []
+  - linux-vaapi-vulkan          # any Vulkan filter feeding a reverse hwmap to
+                                # VAAPI; reproduced on Intel ANV and AMD RADV
+reproducer: tests/vulkan-vaapi-reverse-sync.sh
+samples: []                     # synthetic lavfi source, encoded with h264_vaapi
 failure_without_patch:
-  - "Vulkan-filtered frames show displaced image fragments during motion and scene cuts after reverse mapping to VAAPI for encoding"
-  - "Encoding and decoding may succeed without errors despite corrupted frame contents"
+  - "reproducer: most frames differ from the hwdownload/hwupload reference,
+     varying run to run; exits 1"
+  - "visible as displaced rectangular fragments on motion and cuts; encode and
+     decode report no errors"
 success_with_patch:
-  - "Decoded output matches the synchronized CPU-transfer reference across repeated runs"
+  - "every run matches the reference frame for frame; reproducer exits 0"
 notes:
-  - >-
-    av_hwframe_map returns the original VAAPI frame for a reverse mapping.
-    The Vulkan mapping destructor waits at final release, but queued Vulkan
-    work can retain that mapping after the original surface is returned to
-    the encoder. Wait for the Vulkan frame timeline before exposing the
-    VAAPI surface. This does not download or upload pixel data.
-  - >-
-    Deliberately limited to the Vulkan-to-VAAPI reverse-unmap shortcut.
-    Other mapping pairs and forward export paths are unchanged. Waiting
-    on the host can reduce overlap; this is a scoped downstream correction,
-    not a new public mapping API or a claim of optimal asynchronous interop.
-  - >-
-    A proposed upstream DRM-import dependency fix (FFmpeg PR25161) did not
-    correct this reproduction. This patch is independently implemented,
-    not a backport of that proposal. No FFmpeg upstream PR has been opened.
-  - >-
-    AMD, other Intel generations, non-Linux platforms, and long-running
-    multi-channel throughput have not been validated.
+  - "MECHANISM: hwmap=derive_device=vaapi:reverse=1 gives upstream Vulkan
+     filters frames mapped from VAAPI surfaces (VAAPI -> DRM -> Vulkan). On the
+     way back av_hwframe_map() sees an unmap and returns hwmap->source
+     directly. The Vulkan mapping waits on its timeline semaphores only in
+     vulkan_frame_free(), when its last reference goes, so the VAAPI consumer
+     can read the surface while Vulkan is still writing it. The patch waits on
+     the frame's semaphores (under the frame lock) before returning the VAAPI
+     surface. Pixels stay on the GPU; other mapping pairs are unchanged."
+  - "No queue family release or layout transition is done before the handoff,
+     unlike the forward vulkan_map_to_drm() export. The wait alone was enough
+     on ANV and RADV."
+  - "COST: none measurable. Arc A380, 1800 frames at 1440x1080: 4.21 s stock
+     (corrupt) vs 4.18 s patched. The hwdownload/hwupload workaround took
+     37-41 s on the same card."
+  - "LIBPLACEBO: the only working shape on VAAPI is DRM_PRIME input
+     (hwmap=derive_device=drm) and rgba output, with scale_vulkan writing the
+     reverse-mapped nv12 surface. A Vulkan frame mapped straight from VAAPI
+     fails to import (CreateImage VK_ERROR_OUT_OF_DEVICE_MEMORY), and
+     libplacebo cannot render into the reverse-mapped nv12 surfaces
+     (texture->params.renderable). Dolby Vision RPU side data survives VAAPI
+     decode and both maps: DV5 output matched software decode bit for bit.
+     ErsatzTV next does not use this path yet."
 last_verified:
   version: n8.1.2
   date: 2026-10-22
   builds:
-    without_patch: 8.1.2-etv.5
-    with_patch: 8.1.2-etv.5-vulkan-sync.1
+    without_patch: n8.1.2-etv.5
+    with_patch: n8.1.2-etv.dev.aed834fa  # linux64, main aed834f + this patch
   how: >-
-    The corrected 8.1.2-5 build used the matching ErsatzTV dependency image,
-    release configure options, all patches 0001-0018 and patch 0019.
-    Its SHA-256 is fb9e95d25f929cd394071dadc27afe2ff9c9defeacffa5f8de1b27fa8c5d2d95.
-    A 12-second moving SD source was decoded with VAAPI, scaled/filtered by
-    libplacebo in RGBA, converted to NV12 by scale_vulkan, reverse-mapped to
-    VAAPI and encoded as 1080p H264. The CPU-transfer reference had 360 frames.
-    Stock 8.1.2-5 matched 4 of 360 decoded native-resolution reference frames;
-    the patched run, its repeat and an unthrottled patched run each matched
-    all 360 exactly by framemd5. Release 5 timings overlapped build activity
-    and are not capacity evidence. In the earlier controlled 8.1.2-4 sample,
-    the original GPU path ran at 4.53x real time with corruption, the clean
-    CPU-copy workaround at 3.33x, and the clean patched GPU path at 4.77x.
-    This demonstrates avoiding the CPU-copy penalty in that short sample,
-    not a general speedup over the original GPU path or sustained capacity.
+    tests/vulkan-vaapi-reverse-sync.sh, 3 runs each.
+    Arc A380 (8086:56a5), Arch Linux, Mesa 26.2.5 ANV, iHD 26.3.5:
+    etv.5 matched 1/360 frames on every run; patched 360/360 on every run.
+    Ryzen 5 3550H Vega (Raven, 1002:15d8), Ubuntu 26.04, Mesa 26.0.8 RADV
+    and radeonsi: same results (1/360 vs 360/360).
+    Also on both, by hand: libplacebo SDR scale and HDR10 tonemap (next's
+    bt.2390 arguments) through the same handoff matched the reference on
+    every patched run; stock matched 5-26/600 (A380, SDR) and 212-243/600 and
+    3/480 (Raven, SDR and HDR).
 remove_when: >-
-  The selected upstream FFmpeg source synchronizes pending Vulkan writes
-  before this reverse mapping is returned, and the documented reproduction
-  passes on the affected Intel Vulkan/VAAPI stack without this patch.
+  av_hwframe_map() (or the Vulkan unmap) synchronises pending Vulkan work
+  before a reverse mapping returns the original VAAPI surface, and the
+  reproducer passes without this patch.
