@@ -1,0 +1,66 @@
+id: vulkan-vaapi-reverse-sync
+patch: 0019-avutil-vulkan-vaapi-reverse-sync.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. av_hwframe_map() in FFmpeg master (17ec998942) still returns
+  # hwmap->source for an unmap without synchronising. The DRM-import
+  # wait-stage proposal (ffmpeg-devel PR25161) does not fix this reproduction.
+  commits: []
+dependencies: []
+platforms:
+  - linux-vaapi-vulkan          # any Vulkan filter feeding a reverse hwmap to
+                                # VAAPI; reproduced on Intel ANV and AMD RADV
+reproducer: tests/vulkan-vaapi-reverse-sync.sh
+samples: []                     # synthetic lavfi source, encoded with h264_vaapi
+failure_without_patch:
+  - "reproducer: most frames differ from the hwdownload/hwupload reference,
+     varying run to run; exits 1"
+  - "visible as displaced rectangular fragments on motion and cuts; encode and
+     decode report no errors"
+success_with_patch:
+  - "every run matches the reference frame for frame; reproducer exits 0"
+notes:
+  - "MECHANISM: hwmap=derive_device=vaapi:reverse=1 gives upstream Vulkan
+     filters frames mapped from VAAPI surfaces (VAAPI -> DRM -> Vulkan). On the
+     way back av_hwframe_map() sees an unmap and returns hwmap->source
+     directly. The Vulkan mapping waits on its timeline semaphores only in
+     vulkan_frame_free(), when its last reference goes, so the VAAPI consumer
+     can read the surface while Vulkan is still writing it. The patch waits on
+     the frame's semaphores (under the frame lock) before returning the VAAPI
+     surface. Pixels stay on the GPU; other mapping pairs are unchanged."
+  - "No queue family release or layout transition is done before the handoff,
+     unlike the forward vulkan_map_to_drm() export. The wait alone was enough
+     on ANV and RADV."
+  - "COST: none measurable. Arc A380, 1800 frames at 1440x1080: 4.21 s stock
+     (corrupt) vs 4.18 s patched. The hwdownload/hwupload workaround took
+     37-41 s on the same card."
+  - "LIBPLACEBO: the only working shape on VAAPI is DRM_PRIME input
+     (hwmap=derive_device=drm) and rgba output, with scale_vulkan writing the
+     reverse-mapped nv12 surface. A Vulkan frame mapped straight from VAAPI
+     fails to import (CreateImage VK_ERROR_OUT_OF_DEVICE_MEMORY), and
+     libplacebo cannot render into the reverse-mapped nv12 surfaces
+     (texture->params.renderable). Dolby Vision RPU side data survives VAAPI
+     decode and both maps: DV5 output matched software decode bit for bit.
+     ErsatzTV next does not use this path yet."
+last_verified:
+  version: n8.1.2
+  date: 2026-10-22
+  builds:
+    without_patch: n8.1.2-etv.5
+    with_patch: n8.1.2-etv.dev.aed834fa  # linux64, main aed834f + this patch
+  how: >-
+    tests/vulkan-vaapi-reverse-sync.sh, 3 runs each.
+    Arc A380 (8086:56a5), Arch Linux, Mesa 26.2.5 ANV, iHD 26.3.5:
+    etv.5 matched 1/360 frames on every run; patched 360/360 on every run.
+    Ryzen 5 3550H Vega (Raven, 1002:15d8), Ubuntu 26.04, Mesa 26.0.8 RADV
+    and radeonsi: same results (1/360 vs 360/360).
+    Also on both, by hand: libplacebo SDR scale and HDR10 tonemap (next's
+    bt.2390 arguments) through the same handoff matched the reference on
+    every patched run; stock matched 5-26/600 (A380, SDR) and 212-243/600 and
+    3/480 (Raven, SDR and HDR).
+remove_when: >-
+  av_hwframe_map() (or the Vulkan unmap) synchronises pending Vulkan work
+  before a reverse mapping returns the original VAAPI surface, and the
+  reproducer passes without this patch.

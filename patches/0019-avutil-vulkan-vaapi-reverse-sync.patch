@@ -1,0 +1,97 @@
+From: TacoRocket
+Subject: [PATCH] avutil/hwcontext: wait for Vulkan writes before a reverse
+ unmap to VAAPI
+
+A reverse hwmap (hwmap=derive_device=vaapi:reverse=1) hands Vulkan
+filters frames that are mappings of VAAPI surfaces, and the unmap in
+av_hwframe_map() returns the original VAAPI surface without waiting for
+the Vulkan work that wrote it. The mapping's own wait only runs when its
+last reference is dropped, so the encoder can read the surface while
+Vulkan is still writing it: displaced fragments on motion and cuts, with
+no errors reported.
+
+Wait on the frame's timeline semaphores before returning the VAAPI
+surface. Pixels stay on the GPU; other mapping pairs are unchanged.
+---
+ libavutil/hwcontext.c          |  8 ++++++++
+ libavutil/hwcontext_internal.h |  6 ++++++
+ libavutil/hwcontext_vulkan.c   | 30 ++++++++++++++++++++++++++++++
+ 3 files changed, 44 insertions(+)
+
+diff --git a/libavutil/hwcontext.c b/libavutil/hwcontext.c
+index 6cdee71..55ca87e 100644
+--- a/libavutil/hwcontext.c
++++ b/libavutil/hwcontext.c
+@@ -821,6 +821,14 @@ int av_hwframe_map(AVFrame *dst, const AVFrame *src, int flags)
+                 return AVERROR(EINVAL);
+             }
+             hwmap = (HWMapDescriptor*)src->buf[0]->data;
++#if CONFIG_VULKAN
++            if (src->format == AV_PIX_FMT_VULKAN &&
++                hwmap->source->format == AV_PIX_FMT_VAAPI) {
++                ret = ff_vulkan_wait_frame(src);
++                if (ret < 0)
++                    return ret;
++            }
++#endif
+             return av_frame_replace(dst, hwmap->source);
+         }
+     }
+diff --git a/libavutil/hwcontext_internal.h b/libavutil/hwcontext_internal.h
+index 04a0a5c..eacb569 100644
+--- a/libavutil/hwcontext_internal.h
++++ b/libavutil/hwcontext_internal.h
+@@ -151,6 +151,12 @@ int ff_hwframe_map_create(AVBufferRef *hwframe_ref,
+  */
+ int ff_hwframe_map_replace(AVFrame *dst, const AVFrame *src);
+ 
++/**
++ * Wait for pending Vulkan work on a frame, used before a reverse mapping
++ * hands the original VAAPI surface back to its consumer.
++ */
++int ff_vulkan_wait_frame(const AVFrame *src);
++
+ extern const HWContextType ff_hwcontext_type_cuda;
+ extern const HWContextType ff_hwcontext_type_d3d11va;
+ extern const HWContextType ff_hwcontext_type_d3d12va;
+diff --git a/libavutil/hwcontext_vulkan.c b/libavutil/hwcontext_vulkan.c
+index e80ab45..b0ee256 100644
+--- a/libavutil/hwcontext_vulkan.c
++++ b/libavutil/hwcontext_vulkan.c
+@@ -2406,6 +2406,36 @@ static void vulkan_free_internal(AVVkFrame *f)
+     av_freep(&f->internal);
+ }
+ 
++/* Complete Vulkan writes before a reverse mapping returns the VAAPI surface. */
++int ff_vulkan_wait_frame(const AVFrame *src)
++{
++    AVHWFramesContext *hwfc = (AVHWFramesContext *)src->hw_frames_ctx->data;
++    AVVulkanFramesContext *vkfc = hwfc->hwctx;
++    VulkanDevicePriv *p = hwfc->device_ctx->hwctx;
++    AVVkFrame *f = (AVVkFrame *)src->data[0];
++    VkResult ret = VK_SUCCESS;
++    int nb_sems = 0;
++
++    vkfc->lock_frame(hwfc, f);
++    while (nb_sems < FF_ARRAY_ELEMS(f->sem) && f->sem[nb_sems])
++        nb_sems++;
++    if (nb_sems) {
++        VkSemaphoreWaitInfo wait = {
++            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
++            .semaphoreCount = nb_sems,
++            .pSemaphores = f->sem,
++            .pValues = f->sem_value,
++        };
++        ret = p->vkctx.vkfn.WaitSemaphores(p->p.act_dev, &wait, UINT64_MAX);
++    }
++    vkfc->unlock_frame(hwfc, f);
++    if (ret != VK_SUCCESS) {
++        av_log(hwfc, AV_LOG_ERROR, "Reverse mapping GPU wait failed: %d\n", ret);
++        return AVERROR_EXTERNAL;
++    }
++    return 0;
++}
++
+ static void vulkan_frame_free(AVHWFramesContext *hwfc, AVVkFrame *f)
+ {
+     VulkanDevicePriv *p = hwfc->device_ctx->hwctx;
