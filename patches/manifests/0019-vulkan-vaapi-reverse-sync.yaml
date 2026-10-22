@@ -38,18 +38,23 @@ last_verified:
   version: n8.1.2
   date: 2026-10-22
   builds:
-    without_patch: 8.1.2-etv.4
-    with_patch: 8.1.2-etv.4-sync-probe
+    without_patch: 8.1.2-etv.5
+    with_patch: 8.1.2-etv.5-vulkan-sync.1
   how: >-
-    Paired builds used the same ErsatzTV dependency image, release configure
-    options and patches 0001-0015. A 12-second moving SD source was decoded
-    with VAAPI, scaled/filtered by libplacebo in RGBA, converted to NV12 by
-    scale_vulkan, reverse-mapped to VAAPI and encoded as 1080p H264.
-    Two paced runs and an unthrottled corrected run each matched all 360
-    decoded native-resolution frames of the CPU-transfer reference exactly
-    by framemd5. The unpatched path retained visible corruption. One short
-    throughput sample measured 4.77x real time with the wait versus 3.33x
-    with CPU pixel transfers; these are not capacity guarantees.
+    The corrected 8.1.2-5 build used the matching ErsatzTV dependency image,
+    release configure options, all patches 0001-0018 and patch 0019.
+    Its SHA-256 is fb9e95d25f929cd394071dadc27afe2ff9c9defeacffa5f8de1b27fa8c5d2d95.
+    A 12-second moving SD source was decoded with VAAPI, scaled/filtered by
+    libplacebo in RGBA, converted to NV12 by scale_vulkan, reverse-mapped to
+    VAAPI and encoded as 1080p H264. The CPU-transfer reference had 360 frames.
+    Stock 8.1.2-5 matched 4 of 360 decoded native-resolution reference frames;
+    the patched run, its repeat and an unthrottled patched run each matched
+    all 360 exactly by framemd5. Release 5 timings overlapped build activity
+    and are not capacity evidence. In the earlier controlled 8.1.2-4 sample,
+    the original GPU path ran at 4.53x real time with corruption, the clean
+    CPU-copy workaround at 3.33x, and the clean patched GPU path at 4.77x.
+    This demonstrates avoiding the CPU-copy penalty in that short sample,
+    not a general speedup over the original GPU path or sustained capacity.
 remove_when: >-
   The selected upstream FFmpeg source synchronizes pending Vulkan writes
   before this reverse mapping is returned, and the documented reproduction

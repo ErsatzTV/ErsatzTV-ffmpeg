@@ -8,8 +8,10 @@ both the encode and subsequent software decode completed without errors.
 Patch 0019 waits for the Vulkan frame's timeline semaphores before returning
 the original VAAPI surface. It uses the existing Vulkan frame lock and propagates
 a failed wait. Frames stay in GPU memory. Other mapping pairs are unchanged.
-The host wait trades some asynchronous overlap for correct ownership handoff;
-this is a narrowly scoped downstream correction, not a general mapping redesign.
+The host wait trades some asynchronous overlap for correct ownership handoff.
+It preserves the GPU path and avoids the slower workaround of copying every
+frame to CPU memory and back. This is a narrowly scoped downstream correction,
+not a general mapping redesign.
 
 ## Manual reproduction
 
@@ -55,10 +57,35 @@ instead of treating every hash mismatch as proof of this particular defect.
 
 ## Evidence boundary and retirement
 
-The manifest records the exact checks performed. Our initial diagnostic used
-ErsatzTV 8.1.2-4, then the carry was prepared against 8.1.2-5. Do not infer AMD,
-other Intel generations, macOS/Windows, or sustained multi-channel validation
-from this result. No upstream FFmpeg acceptance is claimed.
+The initial diagnostic used ErsatzTV 8.1.2-4. The correction was then built and
+verified against 8.1.2-5 with its matching dependency image, release configure
+options, all 18 release patches, and patch 0019. The resulting binary identifies
+itself as `8.1.2-etv.5-vulkan-sync.1` and has SHA-256
+`fb9e95d25f929cd394071dadc27afe2ff9c9defeacffa5f8de1b27fa8c5d2d95`.
+
+For the 12-second reproduction, the CPU-transfer reference contained 360 decoded
+frames. Stock 8.1.2-5 matched only 4 of those 360 frames. The patched run, its
+repeat, and an unthrottled patched run each matched all 360 native-resolution
+frames exactly. These checks establish correction of the observed corruption
+on the tested stack.
+
+The earlier controlled 8.1.2-4 timing sample illustrates why retaining the GPU
+path matters:
+
+| Path | Speed relative to real time | Output |
+| --- | --- | --- |
+| Original GPU path | 4.53x | Corrupt |
+| CPU download/upload workaround | 3.33x | Clean |
+| Patched GPU path | 4.77x | Clean |
+
+This short sample supports avoiding the CPU-copy penalty; it does not establish
+a general speedup over the original GPU path or a sustained capacity guarantee.
+The 8.1.2-5 timing runs overlapped build activity, so their timings are not capacity
+evidence.
+
+The manifest records the checks performed. Do not infer AMD, other Intel
+generations, macOS/Windows, or sustained multi-channel validation from these
+results. No upstream FFmpeg acceptance is claimed.
 
 The related upstream DRM-import wait-stage proposal
 [PR25161](https://www.mail-archive.com/ffmpeg-devel@ffmpeg.org/msg191228.html)
