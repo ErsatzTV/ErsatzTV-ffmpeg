@@ -1,0 +1,56 @@
+id: vulkan-vaapi-reverse-sync
+patch: 0019-avutil-vulkan-vaapi-reverse-sync.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  commits: []
+dependencies: []
+platforms:
+  - linux-intel-vulkan-vaapi
+reproducer: ../docs/vulkan-vaapi-reverse-sync.md
+samples: []
+failure_without_patch:
+  - "Vulkan-filtered frames show displaced image fragments during motion and scene cuts after reverse mapping to VAAPI for encoding"
+  - "Encoding and decoding may succeed without errors despite corrupted frame contents"
+success_with_patch:
+  - "Decoded output matches the synchronized CPU-transfer reference across repeated runs"
+notes:
+  - >-
+    av_hwframe_map returns the original VAAPI frame for a reverse mapping.
+    The Vulkan mapping destructor waits at final release, but queued Vulkan
+    work can retain that mapping after the original surface is returned to
+    the encoder. Wait for the Vulkan frame timeline before exposing the
+    VAAPI surface. This does not download or upload pixel data.
+  - >-
+    Deliberately limited to the Vulkan-to-VAAPI reverse-unmap shortcut.
+    Other mapping pairs and forward export paths are unchanged. Waiting
+    on the host can reduce overlap; this is a scoped downstream correction,
+    not a new public mapping API or a claim of optimal asynchronous interop.
+  - >-
+    A proposed upstream DRM-import dependency fix (FFmpeg PR25161) did not
+    correct this reproduction. This patch is independently implemented,
+    not a backport of that proposal. No FFmpeg upstream PR has been opened.
+  - >-
+    AMD, other Intel generations, non-Linux platforms, and long-running
+    multi-channel throughput have not been validated.
+last_verified:
+  version: n8.1.2
+  date: 2026-10-22
+  builds:
+    without_patch: 8.1.2-etv.4
+    with_patch: 8.1.2-etv.4-sync-probe
+  how: >-
+    Paired builds used the same ErsatzTV dependency image, release configure
+    options and patches 0001-0015. A 12-second moving SD source was decoded
+    with VAAPI, scaled/filtered by libplacebo in RGBA, converted to NV12 by
+    scale_vulkan, reverse-mapped to VAAPI and encoded as 1080p H264.
+    Two paced runs and an unthrottled corrected run each matched all 360
+    decoded native-resolution frames of the CPU-transfer reference exactly
+    by framemd5. The unpatched path retained visible corruption. One short
+    throughput sample measured 4.77x real time with the wait versus 3.33x
+    with CPU pixel transfers; these are not capacity guarantees.
+remove_when: >-
+  The selected upstream FFmpeg source synchronizes pending Vulkan writes
+  before this reverse mapping is returned, and the documented reproduction
+  passes on the affected Intel Vulkan/VAAPI stack without this patch.
