@@ -41,7 +41,7 @@ notes:
      NumInputStream and no in-tree filter uses 1, so the reproducer measures the
      border rather than trusting the runtime."
   - "Why fused into vpp_qsv rather than a standalone pad_qsv: a standalone
-     filter (branch pad-qsv in ~/code/FFmpeg/FFmpeg, 6/6 cases green on Arc) was
+     filter (unpublished, 6/6 cases green on Arc) was
      built and benchmarked against this on an N100 (Debian trixie):
        ceiling vpp_qsv scale only        325 fps  9.2 s CPU
        vpp_qsv scale + pad_qsv           190 fps 11.6 s CPU

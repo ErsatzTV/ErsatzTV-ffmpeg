@@ -76,10 +76,11 @@ Use the files from the published prerelease, not CI artifacts. Do these steps on
 
    The software tests must all pass. The VideoToolbox tests must pass, except for two known VideoToolbox limits that other FFmpeg builds also have: the interlaced H.264 tests on Apple silicon, and `copy_still_image` on Intel.
 
-4. Run the readrate test with the macOS bash:
+4. Run the readrate test with the macOS bash, and the VideoToolbox high reference count test:
 
    ```sh
    /bin/bash patches/tests/readrate-sparse-stream-stall.sh "$ETV_TEST_FFMPEG"
+   sh patches/tests/videotoolbox-h264-high-refs.sh "$ETV_TEST_FFMPEG" "$(mktemp -d)/out"
    ```
 
 5. Make sure that an `https` input works with certificate verification:

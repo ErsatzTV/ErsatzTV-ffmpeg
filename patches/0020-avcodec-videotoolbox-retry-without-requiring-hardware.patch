@@ -1,0 +1,84 @@
+VideoToolbox: retry a refused hardware decoder session without requiring
+hardware.
+
+FFmpeg creates every VideoToolbox decoder session except HEVC with
+RequireHardwareAcceleratedVideoDecoder. The Intel Mac hardware H.264 decoder
+refuses streams with more than 10 reference frames (x264 veryslow/placebo use
+16) with kVTVideoDecoderNotAvailableNowErr, although VTIsHardwareDecodeSupported
+reports H.264 as supported. The hwaccel then fails to initialise, the decoder
+falls back to software yuv420p frames, and a filter graph that expects
+videotoolbox_vld frames can't be configured.
+
+On that error, create the session again with
+EnableHardwareAcceleratedVideoDecoder. VideoToolbox then uses its own software
+decoder and still returns CVPixelBuffers, so callers keep getting
+videotoolbox_vld frames.
+
+diff --git a/libavcodec/videotoolbox.c b/libavcodec/videotoolbox.c
+index 2cd22cb..0576b9c 100644
+--- a/libavcodec/videotoolbox.c
++++ b/libavcodec/videotoolbox.c
+@@ -832,7 +832,8 @@ static CFDictionaryRef videotoolbox_buffer_attributes_create(int width,
+ }
+ 
+ static CFDictionaryRef videotoolbox_decoder_config_create(CMVideoCodecType codec_type,
+-                                                          AVCodecContext *avctx)
++                                                          AVCodecContext *avctx,
++                                                          int require_hw)
+ {
+     CFMutableDictionaryRef avc_info;
+     CFDataRef data = NULL;
+@@ -843,9 +844,9 @@ static CFDictionaryRef videotoolbox_decoder_config_create(CMVideoCodecType codec
+                                                                    &kCFTypeDictionaryValueCallBacks);
+ 
+     CFDictionarySetValue(config_info,
+-                         codec_type == kCMVideoCodecType_HEVC ?
+-                            kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder :
+-                            kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder,
++                         require_hw ?
++                            kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder :
++                            kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder,
+                          kCFBooleanTrue);
+ 
+     avc_info = CFDictionaryCreateMutable(kCFAllocatorDefault,
+@@ -906,6 +907,7 @@ static int videotoolbox_start(AVCodecContext *avctx)
+     VTDecompressionOutputCallbackRecord decoder_cb;
+     CFDictionaryRef decoder_spec;
+     CFDictionaryRef buf_attr;
++    int require_hw;
+ 
+     if (!videotoolbox) {
+         av_log(avctx, AV_LOG_ERROR, "hwaccel context is not set\n");
+@@ -970,7 +972,11 @@ static int videotoolbox_start(AVCodecContext *avctx)
+     }
+ #endif
+ 
+-    decoder_spec = videotoolbox_decoder_config_create(videotoolbox->cm_codec_type, avctx);
++    require_hw = videotoolbox->cm_codec_type != kCMVideoCodecType_HEVC;
++
++retry:
++    decoder_spec = videotoolbox_decoder_config_create(videotoolbox->cm_codec_type, avctx,
++                                                      require_hw);
+ 
+     if (!decoder_spec) {
+         av_log(avctx, AV_LOG_ERROR, "decoder specification creation failed\n");
+@@ -1008,6 +1014,19 @@ static int videotoolbox_start(AVCodecContext *avctx)
+     if (buf_attr)
+         CFRelease(buf_attr);
+ 
++    /* The hardware decoder can refuse a stream it reports as supported, e.g.
++       Intel Macs refuse H.264 with more than 10 reference frames. Let
++       VideoToolbox fall back to its software decoder so the caller still
++       gets videotoolbox frames. */
++    if (status == kVTVideoDecoderNotAvailableNowErr && require_hw) {
++        av_log(avctx, AV_LOG_WARNING, "VideoToolbox hardware decoder not available, "
++               "retrying without requiring hardware.\n");
++        CFRelease(videotoolbox->cm_fmt_desc);
++        videotoolbox->cm_fmt_desc = NULL;
++        require_hw = 0;
++        goto retry;
++    }
++
+     switch (status) {
+     case kVTVideoDecoderNotAvailableNowErr:
+         av_log(avctx, AV_LOG_VERBOSE, "VideoToolbox session not available.\n");
