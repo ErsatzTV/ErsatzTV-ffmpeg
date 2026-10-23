@@ -1,0 +1,58 @@
+id: qsvdec-av1-hdr-side-data
+patch: 0021-avcodec-qsvdec-fix-av1-duplicate-hdr-side-data.patch
+based_on: n8.1.2
+status: carried
+upstream:
+  issue: null
+  commits:
+    # master only; not in release/8.1 or release/9.0 as of 2026-10-07, and
+    # n9.0.2 still fails the reproducer
+    - 4ef55a1bcf  # avcodec/qsvdec: fix av1_qsv decoder exporting duplicate HDR side data
+                  # (fixes 473e84ad62, in every release since n7.1)
+dependencies: []              # touches qsvdec.c after 0013; applies with offsets only
+platforms:
+  - linux-qsv
+  - windows-qsv               # needs AV1 hardware decode (Gen12 / Tiger Lake or newer)
+reproducer: tests/qsvdec-av1-hdr-side-data.sh
+samples:
+  - samples/av1-640x360-hdr10-mdcv.mkv   # samples/make-av1-hdr10-mdcv.sh
+failure_without_patch:
+  - "[vf#0:0] Task finished with error code: -17 (File exists)"
+  - "[enc:hevc_qsv] Could not open encoder before EOF"
+success_with_patch:
+  - "every frame decodes; vpp_qsv tonemap and hevc_qsv run to the end"
+notes:
+  - "MECHANISM: qsv_export_hdr_side_data_av1() added mastering display and
+     content light side data with av_*_create_side_data(), without the
+     side_data_pref() check the HEVC path gets from
+     ff_decode_{mastering_display,content_light}_new(). Frames already carry
+     the container's copy, so they end up with two of a non-multi type, and
+     av_frame_side_data_clone() returns EEXIST while fftools configures the
+     filter graph. Any filter triggers it, even null."
+  - "Raw AV1 (.obu) of the same stream decodes fine; only containers with
+     their own HDR metadata (Matroska Colour, MP4 mdcv/clli) fail, which is
+     most HDR10 AV1 remuxes."
+  - "Found from an ErsatzTV next troubleshooting run: 4K AV1 HDR10 + DV
+     profile 10 MKV, QSV profile on an Arc A750. VAAPI decode of the same
+     file works (it does not use qsvdec)."
+  - "Straight backport of the upstream diff."
+last_verified:
+  version: n8.1.2
+  date: 2026-10-23
+  builds:
+    without_patch: n8.1.2-etv.dev.889a417a
+    with_patch: n8.1.2-etv.dev.889a417a  # linux64, main 889a417 + this patch
+  how: >-
+    tests/qsvdec-av1-hdr-side-data.sh on Arc A380 (8086:56a5), Arch Linux:
+    etv.4 fails both cases with -17 (File exists); the patched build passes
+    both, 48/48 frames. On Arc A750 (8086:56a1), Arch Linux: the unpatched dev
+    build, etv.5 and stock n9.0.2 all fail. The original report (4K AV1 HDR10 +
+    DV profile 10 MKV, ErsatzTV next QSV pipeline: vpp_qsv tonemap and pad into
+    hevc_qsv) fails on the unpatched build and runs to completion with the
+    patched one, output bt709 SDR.
+    Windows 10, same A380, driver 32.0.101.9150 (runtime 2.17), win64 build of
+    the same commit: av1_qsv -> vpp_qsv tonemap -> hevc_qsv on ErsatzTV next's
+    1080p_av1_10_hdr.mkv decodes 48/48 with the patch and fails with -17 on
+    etv.5; next's qsv suite cases for that fixture pass 18/18 with the patch
+    and fail with -17 on etv.5.
+remove_when: "The build moves to an FFmpeg release that contains 4ef55a1bcf"
