@@ -1,0 +1,69 @@
+id: videotoolbox-retry-without-requiring-hardware
+patch: 0020-avcodec-videotoolbox-retry-without-requiring-hardware.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. FFmpeg master (17ec998942) still requires hardware for every
+  # codec except HEVC and returns ENOSYS on kVTVideoDecoderNotAvailableNowErr.
+  commits: []
+dependencies: []
+platforms:
+  - macos-videotoolbox          # failure seen on Intel Macs only; Apple silicon
+                                # accepts the sample in hardware
+reproducer: tests/videotoolbox-h264-high-refs.sh
+samples:
+  - path: samples/h264-640x360-ref16.mkv
+    sha256: "2de6bb28ef20b5fd296b54f63ac43405baeb4960b892a6d8c4a4ff701b932dab"
+    # Synthetic 2s testsrc2 640x360 30fps, libx264 preset medium with
+    # ref=16 bframes=3 (n8.1.2-etv.5). No audio.
+failure_without_patch:
+  - "VideoToolbox session not available (verbose), then \"Failed setup for
+     format videotoolbox_vld: hwaccel initialisation returned error\""
+  - "decoder falls back to software yuv420p; a videotoolbox_vld graph fails
+     with \"Impossible to convert between the formats\"; reproducer exits 1"
+success_with_patch:
+  - "warning \"VideoToolbox hardware decoder not available, retrying without
+     requiring hardware\"; frames stay videotoolbox_vld; reproducer exits 0"
+  - "decoded frames are bit-identical to FFmpeg's software h264 decoder"
+notes:
+  - "MECHANISM: videotoolbox_decoder_config_create() sets
+     RequireHardwareAcceleratedVideoDecoder for every codec except HEVC. The
+     Intel Mac hardware H.264 decoder refuses streams with
+     max_num_ref_frames >= 11 (any resolution, level or B-frame count) with
+     kVTVideoDecoderNotAvailableNowErr, although VTIsHardwareDecodeSupported
+     reports H.264. x264 veryslow/placebo encodes use 16 refs. The patch
+     creates the session again with EnableHardwareAcceleratedVideoDecoder,
+     which makes VideoToolbox use its software decoder and still return
+     CVPixelBuffers. Callers need no change."
+  - "SCOPE: only kVTVideoDecoderNotAvailableNowErr, and only for sessions
+     that required hardware. Other errors (e.g. no decoder for the format)
+     still return ENOSYS and fall back to FFmpeg's software decoder as before.
+     The same error from hardware contention (too many sessions) now also
+     falls back to the VideoToolbox software decoder instead of failing."
+last_verified:
+  version: n8.1.2
+  date: 2026-10-22
+  builds:
+    without_patch: n8.1.2-etv.5
+    with_patch: local  # macos64 on the Intel Mac, patches 0001-0020, minimal
+                       # configure (--disable-x86asm --disable-inline-asm,
+                       # videotoolbox, no external libs)
+  how: >-
+    Intel Mac (Coffee Lake, UHD 630), macOS 15.
+    tests/videotoolbox-h264-high-refs.sh: etv.5 fails (exit 178, "Impossible
+    to convert") on the bundled sample and on next's
+    1080p_h264_cropped_pgs.mkv (ref 16, L5.1); the patched build passes both
+    on the VideoToolbox software decoder. A ref 10 control stays on the
+    hardware decoder with both builds. framemd5 of the hwdownload output
+    matches FFmpeg's software decode for every frame of both files.
+    next f4ee325 videotoolbox image_subtitle_unknown_size: 3/3 in each of 6
+    runs (etv.5: 0/3). A first build with only --disable-x86asm failed the
+    burn-in check at random: inline-asm-only x86 builds hit upstream issue
+    21113 (garbage yuv2planeX output, fixed by 62285be009 for 9.0). Release
+    builds have external asm and are not affected. Apple silicon was not
+    tested with the patched build.
+remove_when: >-
+  FFmpeg falls back from a refused RequireHardwareAcceleratedVideoDecoder
+  session on its own, and the reproducer passes on an Intel Mac without this
+  patch.
