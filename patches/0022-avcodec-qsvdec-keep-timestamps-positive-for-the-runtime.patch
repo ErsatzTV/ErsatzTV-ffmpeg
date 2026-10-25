@@ -1,0 +1,38 @@
+qsvdec passed negative packet pts to the runtime as an unsigned mfxU64
+TimeStamp. vpl-gpu-rt converts TimeStamps to double seconds and treats a time
+below zero as missing, so it extrapolates one from a counter starting at 0.
+An -ss input seek starts decoding at the keyframe before the seek point, and
+the frames in between have negative pts, so they came back with positive
+made-up times: ffmpeg kept them, and every later frame was late by about as
+many frames (3 to 6 on H.264 and MPEG-2, Arc A750 and A380).
+
+Bias every timestamp handed to the runtime by 2^33 (90 kHz, about 26.5 hours)
+and remove it again on output.
+
+diff --git a/libavcodec/qsvdec.c b/libavcodec/qsvdec.c
+--- a/libavcodec/qsvdec.c
++++ b/libavcodec/qsvdec.c
+@@ -61,13 +61,20 @@
+ 
+ static const AVRational mfx_tb = { 1, 90000 };
+ 
++/* The runtime converts timestamps to seconds and treats negative ones as
++ * missing, extrapolating a time for the frame instead. Packets before an -ss
++ * seek point have negative pts, so their frames, and every frame after them,
++ * came back late. Bias the timestamps the runtime sees so they stay positive. */
++#define MFX_PTS_BIAS (INT64_C(1) << 33)
++
+ #define PTS_TO_MFX_PTS(pts, pts_tb) ((pts) == AV_NOPTS_VALUE ? \
+-    MFX_TIMESTAMP_UNKNOWN : pts_tb.num ? \
+-    av_rescale_q(pts, pts_tb, mfx_tb) : pts)
++    MFX_TIMESTAMP_UNKNOWN : (pts_tb.num ? \
++    av_rescale_q(pts, pts_tb, mfx_tb) : (pts)) + MFX_PTS_BIAS)
+ 
+ #define MFX_PTS_TO_PTS(mfx_pts, pts_tb) ((mfx_pts) == MFX_TIMESTAMP_UNKNOWN ? \
+     AV_NOPTS_VALUE : pts_tb.num ? \
+-    av_rescale_q(mfx_pts, mfx_tb, pts_tb) : mfx_pts)
++    av_rescale_q((int64_t)(mfx_pts) - MFX_PTS_BIAS, mfx_tb, pts_tb) : \
++    (int64_t)(mfx_pts) - MFX_PTS_BIAS)
+ 
+ #define MFX_IMPL_VIA_MASK(impl) (0x0f00 & (impl))
+ 
