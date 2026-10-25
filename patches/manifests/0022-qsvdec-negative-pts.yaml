@@ -1,0 +1,64 @@
+id: qsvdec-negative-pts
+patch: 0022-avcodec-qsvdec-keep-timestamps-positive-for-the-runtime.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. qsvdec.c in origin/master (6b05263b44) still passes
+  # av_rescale_q(pts) straight into mfxBitstream.TimeStamp; nothing since the
+  # 2021 time base change (971b4ac733) touches negative timestamps.
+  commits: []
+dependencies: []              # touches the PTS macros only; applies after 0013 and 0021
+platforms:
+  - linux-qsv
+  - windows-qsv
+reproducer: tests/qsvdec-negative-pts.sh
+samples:
+  - samples/h264-320x240-scroll-gop30.mkv    # samples/make-scroll-gop.sh
+  - samples/mpeg2-320x240-scroll-gop15.mkv   # samples/make-scroll-gop.sh
+failure_without_patch:
+  - "no error: ffmpeg exits 0, but frames after an -ss seek carry the wrong pts"
+  - "reproducer: min PSNR ~14-15 dB against software decode paired by timestamp"
+  - "ErsatzTV next: seek_mid_gop fails with 'output matches a scale-and-pad of
+     the source 6 frames late' (H.264) / '4 frames late' (MPEG-2)"
+success_with_patch:
+  - "reproducer: min PSNR inf (H.264, bit-exact) / ~69 dB (MPEG-2) against software"
+notes:
+  - "MECHANISM: an -ss input seek starts decoding at the keyframe before the
+     seek point, and ffmpeg's ts_offset gives the frames before the seek point
+     negative pts. qsvdec stores them in the unsigned mfxBitstream.TimeStamp.
+     vpl-gpu-rt converts TimeStamps to double seconds (GetUmcTimeStamp in
+     _studio/shared/include/mfx_utils.h) and treats a time below -1 as missing
+     (m_isOriginalPTS = m_dFrameTime > -1.0 in umc_h264_task_supplier.cpp),
+     extrapolating one from a counter that starts at 0. The pre-seek frames
+     come back with positive made-up times, survive ffmpeg's -ss trim, and every
+     real frame after them is late by about as many frames."
+  - "The patch adds 2^33 (90 kHz units, ~26.5 h) to every timestamp handed to
+     the runtime and removes it on output. The runtime's double keeps 2^34 at
+     90 kHz exact. With -copyts or -itsoffset (pts already positive) the
+     unpatched build was already correct, which is what pointed at the sign."
+  - "Found while testing ErsatzTV next with real media: a DVD MPEG-2 clip
+     played ~167 ms behind audio on QSV. It affects every codec qsvdec decodes
+     after a mid-GOP seek. ErsatzTV seeks when a session starts mid-item
+     (joining a channel), when it continues an item it was working ahead on,
+     and for items with an in point; items that start from 0 don't seek.
+     Software and VAAPI decode are unaffected; ffmpeg reorders their timestamps."
+  - "Not fixed here: a file that starts on an open GOP whose leading B-frames
+     can't be decoded. QSV outputs those as concealed pictures (software drops
+     them), and an MPEG-2 one with the same pts as its I-frame still shifts
+     later frames. That needs a separate qsvdec change."
+last_verified:
+  version: n8.1.2
+  date: 2026-10-25
+  builds:
+    without_patch: n8.1.2-etv.6
+    with_patch: n8.1.2-etv.dev.64319695  # linux64 and win64, main 6431969 + this patch
+  how: >-
+    tests/qsvdec-negative-pts.sh on Arc A750 (8086:56a1) and Arc A380
+    (8086:56a5), Arch Linux: etv.6 fails both cases (min PSNR 14.2 / 14.9 dB),
+    the patched build passes both (inf / 69.0 dB). The same ffmpeg command on
+    Intel N150 graphics (ADL-N, 8086:46d4), Windows 11, driver 32.0.101.7092,
+    win64 builds: identical numbers. ErsatzTV next's qsv suite with its seek_mid_gop
+    test: etv.6 fails both seek_mid_gop cases (6 / 4 frames late) on all three;
+    patched 559/559 on the A750, the A380 and the N150.
+remove_when: "Upstream qsvdec keeps the TimeStamps it gives the runtime non-negative"
