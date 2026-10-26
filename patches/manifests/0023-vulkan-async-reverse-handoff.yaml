@@ -1,0 +1,23 @@
+id: vulkan-async-reverse-handoff
+patch: 0023-avutil-vulkan-async-reverse-handoff.patch
+based_on: n8.1.2
+status: experimental-opt-in
+upstream:
+  commits:
+    - 25e187f8494966377a4b9d077260ce7b501a911c
+    - 1d14f9f8c3e4efb32000cb463ebb635ad6f2adb0
+dependencies:
+  - 0019-avutil-vulkan-vaapi-reverse-sync.patch
+  - 0022-avutil-vulkan-direct-nv12-opt-in.patch
+platforms:
+  - linux-vaapi-vulkan
+failure_without_patch:
+  - Reverse handoff explicitly waits on the CPU and a one-slot compute pool serializes reuse.
+notes:
+  - Uses the same ETV_VAAPI_DIRECT_NV12 selection as patch 0022.
+  - Adapts Tymur Boiko's timeline bridge and Lynne's queue-independent pool-depth work to FFmpeg 8; neither full upstream commit is backported unchanged.
+  - Retains the mapped frame through submission and duplicates imported DMA-BUF fds for handoff ownership.
+  - Unsupported or failed sync-file handoff retains the synchronous wait; an unsubmitted execution context is restored before fallback.
+  - No independent throughput gain is claimed; libplacebo producer storage is a separate change.
+  - Patch 0022 plus this extraction yields the byte-identical Vulkan source used by the tested fork.
+remove_when: A supported FFmpeg release supplies the reverse synchronization and execution-depth behavior used by this adaptation.

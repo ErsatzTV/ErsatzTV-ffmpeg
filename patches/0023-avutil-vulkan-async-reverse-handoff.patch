@@ -1,0 +1,196 @@
+From: TacoRocket
+Subject: [PATCH] avutil/vulkan: adapt asynchronous reverse handoff and two command slots
+
+Follow-up to the writable NV12 targets in patch 0022, using the same
+ETV_VAAPI_DIRECT_NV12 selection. Retain the existing synchronous wait on
+unsupported synchronization and recover unsubmitted execution contexts.
+
+Adapted from FFmpeg work by Tymur Boiko and Lynne:
+- Tymur Boiko, 25e187f8494966377a4b9d077260ce7b501a911c:
+  timeline-to-exportable-binary-semaphore synchronization.
+- Lynne, 1d14f9f8c3e4efb32000cb463ebb635ad6f2adb0:
+  execution-pool depth independent of hardware queue count.
+
+This ports those mechanisms to FFmpeg 8 reverse VAAPI mapping. It is not
+an unchanged backport of either full upstream commit. The adapted mapped-frame
+lifetime, imported-fd ownership and failure recovery match the tested fork.
+No independent throughput gain is claimed for this slice.
+---
+--- a/libavutil/hwcontext_vulkan.c
++++ b/libavutil/hwcontext_vulkan.c
+@@ -194,6 +194,9 @@
+ 
+ typedef struct AVVkFrameInternal {
+     pthread_mutex_t update_mutex;
++    VkSemaphore reverse_sync_sem;
++    int reverse_fds[AV_NUM_DATA_POINTERS];
++    int reverse_fd_count;
+ 
+ #if CONFIG_CUDA
+     /* Importing external memory into cuda is really expensive so we keep the
+@@ -2412,6 +2415,104 @@
+     return value && !strcmp(value, "1");
+ }
+ 
++/* Adapt FFmpeg 25e187f84949's timeline-to-sync-file bridge to FFmpeg 8. */
++static int vulkan_async_reverse(const AVFrame *src)
++{
++#if HAVE_LINUX_DMA_BUF_H && defined(DMA_BUF_IOCTL_IMPORT_SYNC_FILE)
++    AVHWFramesContext *hwfc = (AVHWFramesContext *)src->hw_frames_ctx->data;
++    VulkanDevicePriv *p = hwfc->device_ctx->hwctx;
++    VulkanFramesPriv *fp = hwfc->hwctx;
++    AVVkFrame *f = (AVVkFrame *)src->data[0];
++    FFVulkanFunctions *vk = &p->vkctx.vkfn;
++    FFVkExecContext *exec;
++    VkResult ret;
++    int err, sync_fd = -1;
++
++    if (!(p->vkctx.extensions & FF_VK_EXT_EXTERNAL_FD_SEM) ||
++        !f->internal->reverse_fd_count)
++        goto fallback;
++
++    if (!f->internal->reverse_sync_sem) {
++        VkExportSemaphoreCreateInfo export_info = {
++            .sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
++            .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
++        };
++        VkSemaphoreCreateInfo create_info = {
++            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
++            .pNext = &export_info,
++        };
++        ret = vk->CreateSemaphore(p->p.act_dev, &create_info, p->p.alloc,
++                                  &f->internal->reverse_sync_sem);
++        if (ret != VK_SUCCESS)
++            goto fallback;
++    }
++
++    exec = ff_vk_exec_get(&p->vkctx, &fp->compute_exec);
++    err = ff_vk_exec_start(&p->vkctx, exec);
++    if (err < 0)
++        goto reset_exec;
++    /* Retain the mapped frame until submission completes; otherwise its
++     * destructor immediately waits and defeats the asynchronous handoff. */
++    err = ff_vk_exec_add_dep_frame(&p->vkctx, exec, (AVFrame *)src,
++                                   VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
++                                   VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT);
++    if (err < 0)
++        goto reset_exec;
++    err = ff_vk_exec_add_dep_bool_sem(&p->vkctx, exec,
++                                      &f->internal->reverse_sync_sem, 1,
++                                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0);
++    if (err < 0)
++        goto reset_exec;
++    err = ff_vk_exec_submit(&p->vkctx, exec);
++    if (err < 0)
++        goto reset_exec;
++
++    VkSemaphoreGetFdInfoKHR fd_info = {
++        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
++        .semaphore = f->internal->reverse_sync_sem,
++        .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
++    };
++    ret = vk->GetSemaphoreFdKHR(p->p.act_dev, &fd_info, &sync_fd);
++    if (ret != VK_SUCCESS)
++        goto fallback;
++
++    for (int i = 0; i < f->internal->reverse_fd_count; i++) {
++        struct dma_buf_import_sync_file import_info = {
++            .flags = DMA_BUF_SYNC_WRITE,
++            .fd = sync_fd,
++        };
++        err = ioctl(f->internal->reverse_fds[i], DMA_BUF_IOCTL_IMPORT_SYNC_FILE,
++                    &import_info);
++        if (err < 0) {
++            av_log(hwfc, AV_LOG_WARNING, "Vulkan reverse sync import failed: %s; CPU fallback\n",
++                   av_err2str(AVERROR(errno)));
++            goto fallback;
++        }
++    }
++    close(sync_fd);
++    return 1;
++
++reset_exec:
++    /* FFmpeg 8 resets this fence before recording. Restore an unsubmitted
++     * context to idle so fallback cannot leave a later pool reuse hanging. */
++    ff_vk_exec_discard_deps(&p->vkctx, exec);
++    vk->DestroyFence(p->p.act_dev, exec->fence, p->p.alloc);
++    exec->fence = VK_NULL_HANDLE;
++    VkFenceCreateInfo fence_info = {
++        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
++        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
++    };
++    ret = vk->CreateFence(p->p.act_dev, &fence_info, p->p.alloc, &exec->fence);
++    if (ret != VK_SUCCESS)
++        return AVERROR_EXTERNAL;
++    av_log(hwfc, AV_LOG_WARNING, "Vulkan reverse sync submit failed; CPU fallback\n");
++fallback:
++    if (sync_fd >= 0)
++        close(sync_fd);
++#endif
++    return 0;
++}
++
+ /* Complete Vulkan writes before a reverse mapping returns the VAAPI surface. */
+ int ff_vulkan_wait_frame(const AVFrame *src)
+ {
+@@ -2422,6 +2523,11 @@
+     VkResult ret = VK_SUCCESS;
+     int nb_sems = 0;
+ 
++    if (direct_nv12_enabled()) {
++        int result = vulkan_async_reverse(src);
++        if (result != 0)
++            return result < 0 ? result : 0;
++    }
+     vkfc->lock_frame(hwfc, f);
+     while (nb_sems < FF_ARRAY_ELEMS(f->sem) && f->sem[nb_sems])
+         nb_sems++;
+@@ -2465,6 +2571,12 @@
+         vk->WaitSemaphores(hwctx->act_dev, &sem_wait, UINT64_MAX);
+     }
+ 
++    if (f->internal->reverse_sync_sem)
++        vk->DestroySemaphore(hwctx->act_dev, f->internal->reverse_sync_sem, hwctx->alloc);
++#ifndef _WIN32
++    for (int i = 0; i < f->internal->reverse_fd_count; i++)
++        close(f->internal->reverse_fds[i]);
++#endif
+     vulkan_free_internal(f);
+ 
+     for (int i = 0; i < nb_images; i++) {
+@@ -3142,8 +3254,11 @@
+     if (!hwctx->unlock_frame)
+         hwctx->unlock_frame = unlock_frame;
+ 
++    int slots = p->compute_qf->num;
++    if (direct_nv12_enabled() && slots == 1)
++        slots = 2;
+     err = ff_vk_exec_pool_init(&p->vkctx, p->compute_qf, &fp->compute_exec,
+-                               p->compute_qf->num, 0, 0, 0, NULL);
++                               slots, 0, 0, 0, NULL);
+     if (err)
+         return err;
+ 
+@@ -3346,6 +3461,22 @@
+     }
+ 
+     f->tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
++#if HAVE_LINUX_DMA_BUF_H && defined(DMA_BUF_IOCTL_IMPORT_SYNC_FILE)
++    if ((flags & AV_HWFRAME_MAP_WRITE) && direct_nv12_enabled() &&
++        hwfc->sw_format == AV_PIX_FMT_NV12) {
++        for (int i = 0; i < desc->nb_objects; i++) {
++            int fd = dup(desc->objects[i].fd);
++            if (fd < 0) {
++                for (int j = 0; j < f->internal->reverse_fd_count; j++)
++                    close(f->internal->reverse_fds[j]);
++                f->internal->reverse_fd_count = 0;
++                av_log(hwfc, AV_LOG_WARNING, "Vulkan reverse sync fd duplication failed; CPU fallback\n");
++                break;
++            }
++            f->internal->reverse_fds[f->internal->reverse_fd_count++] = fd;
++        }
++    }
++#endif
+ 
+     for (int i = 0; i < desc->nb_layers; i++) {
+         const int planes = desc->layers[i].nb_planes;
