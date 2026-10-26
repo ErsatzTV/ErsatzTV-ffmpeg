@@ -1,0 +1,65 @@
+Add a libplacebo filter option, nv12_output, that selects the renderer's
+direct NV12 output mode through pl_renderer_set_nv12_output(). With
+nv12_output=match and format=nv12:range=tv, a VAAPI tone-mapping chain can
+render straight into the reverse-mapped NV12 surface (patch 0023,
+ETV_VAAPI_DIRECT_NV12=1) with the same output as format=rgba followed by
+scale_vulkan=format=nv12:out_range=limited, in one pass.
+
+The option exists only when FFmpeg is built against a libplacebo that
+defines PL_RENDERER_NV12_OUTPUT (patches/libplacebo/0001, docker build
+argument DIRECT_NV12_OUTPUT=1). Against a stock libplacebo it is not
+compiled in, so `ffmpeg -h filter=libplacebo` lists it only when the
+implementation is present. The mode is set per renderer, so other libplacebo
+filters in the same process are unaffected. The default, off, keeps the
+current behavior. Targets that do not qualify keep libplacebo's normal
+output path.
+
+diff --git a/libavfilter/vf_libplacebo.c b/libavfilter/vf_libplacebo.c
+--- a/libavfilter/vf_libplacebo.c
++++ b/libavfilter/vf_libplacebo.c
+@@ -272,6 +272,11 @@ typedef struct LibplaceboContext {
+     float scene_high;
+     float percentile;
+ 
++#ifdef PL_RENDERER_NV12_OUTPUT
++    /* pl_renderer_set_nv12_output */
++    int nv12_output;
++#endif
++
+     /* pl_color_map_params */
+     int gamut_mode;
+     int tonemapping;
+@@ -695,6 +700,10 @@ static int input_init(AVFilterContext *avctx, LibplaceboInput *input, int idx)
+         return AVERROR(ENOMEM);
+     input->queue = pl_queue_create(s->gpu);
+     input->renderer = pl_renderer_create(s->log, s->gpu);
++#ifdef PL_RENDERER_NV12_OUTPUT
++    if (input->renderer)
++        pl_renderer_set_nv12_output(input->renderer, s->nv12_output);
++#endif
+     input->idx = idx;
+ 
+     return 0;
+@@ -808,6 +817,10 @@ static int init_vulkan(AVFilterContext *avctx, const AVVulkanDeviceContext *hwct
+         RET(input_init(avctx, &s->inputs[i], i));
+     s->nb_active = s->nb_inputs;
+     s->linear_rr = pl_renderer_create(s->log, s->gpu);
++#ifdef PL_RENDERER_NV12_OUTPUT
++    if (s->linear_rr)
++        pl_renderer_set_nv12_output(s->linear_rr, s->nv12_output);
++#endif
+ 
+     /* fall through */
+ fail:
+@@ -1807,6 +1820,11 @@ static const AVOption libplacebo_options[] = {
+         { "ordered_fixed", "Fixed function ordered", 0, AV_OPT_TYPE_CONST, {.i64 = PL_DITHER_ORDERED_FIXED}, 0, 0, STATIC, .unit = "dither" },
+         { "white", "White noise", 0, AV_OPT_TYPE_CONST, {.i64 = PL_DITHER_WHITE_NOISE}, 0, 0, STATIC, .unit = "dither" },
+     { "dither_lut_size", "Dithering LUT size", OFFSET(dither_lut_size), AV_OPT_TYPE_INT, {.i64 = 6}, 1, 8, STATIC },
++#ifdef PL_RENDERER_NV12_OUTPUT
++    { "nv12_output", "Direct NV12 output", OFFSET(nv12_output), AV_OPT_TYPE_INT, {.i64 = PL_NV12_OUTPUT_OFF}, PL_NV12_OUTPUT_OFF, PL_NV12_OUTPUT_MATCH, STATIC, .unit = "nv12_output" },
++        { "off", "Normal output", 0, AV_OPT_TYPE_CONST, {.i64 = PL_NV12_OUTPUT_OFF}, 0, 0, STATIC, .unit = "nv12_output" },
++        { "match", "One pass, same output as format=rgba followed by scale_vulkan=format=nv12:out_range=limited", 0, AV_OPT_TYPE_CONST, {.i64 = PL_NV12_OUTPUT_MATCH}, 0, 0, STATIC, .unit = "nv12_output" },
++#endif
+     { "dither_temporal", "Enable temporal dithering", OFFSET(dither_temporal), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC },
+ 
+     { "cones", "Colorblindness adaptation model", OFFSET(cones), AV_OPT_TYPE_FLAGS, {.i64 = 0}, 0, PL_CONE_LMS, DYNAMIC, .unit = "cone" },
