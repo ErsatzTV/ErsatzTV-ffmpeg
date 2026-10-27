@@ -9,6 +9,10 @@
 # ffmpeg keeps them and every later frame is late by about as many frames. In
 # ErsatzTV every QSV item that starts mid-GOP plays its video 100-200 ms late.
 #
+# The nopts case strips every packet's pts, as in a raw stream or H.264 in AVI.
+# The runtime then makes up times from 0 that never carried 0022's bias, and a
+# version of 0022 that removed the bias anyway put every frame at -95443 s.
+#
 # Each case decodes the sample twice in one ffmpeg run, in software and with
 # -hwaccel qsv, both from -ss 1.4, and compares the frames psnr pairs by
 # timestamp. The picture scrolls every frame, so a timing error scores ~15 dB;
@@ -18,6 +22,7 @@
 # Cases:
 #   h264    h264_qsv, B-frames, keyframe every 30 frames
 #   mpeg2   mpeg2_qsv, B-frames, open GOPs every 15 frames
+#   nopts   h264_qsv, the h264 sample from the start with no packet pts
 #
 # Pass criteria: ffmpeg exits 0 and the minimum frame PSNR is at least MIN_PSNR.
 #
@@ -31,7 +36,7 @@ set -uo pipefail
 
 FFMPEG="${1:-${FFMPEG:-ffmpeg}}"
 
-CASES="${CASES:-h264 mpeg2}"
+CASES="${CASES:-h264 mpeg2 nopts}"
 INIT_HW_DEVICE="${INIT_HW_DEVICE:-qsv=hw}"
 TIMEOUT="${TIMEOUT:-60}"
 SEEK="${SEEK:-1.4}"
@@ -73,6 +78,8 @@ run_bounded() {
 
 run_case() {
     local name="$1" sample="$here/../samples/$2"
+    shift 2
+    local input=("$@")
     local log="$logdir/$name.log"
     local rc
 
@@ -84,9 +91,9 @@ run_case() {
     run_bounded "$TIMEOUT" \
         "$FFMPEG" -nostdin -hide_banner -nostats -loglevel info \
         -init_hw_device "$INIT_HW_DEVICE" \
-        -ss "$SEEK" -t 0.5 -i "$sample" \
+        "${input[@]}" -i "$sample" \
         -hwaccel qsv -hwaccel_output_format qsv -hwaccel_device hw \
-        -ss "$SEEK" -t 0.5 -i "$sample" \
+        "${input[@]}" -i "$sample" \
         -filter_complex "[0:v]format=nv12[sw];[1:v]hwdownload,format=nv12[hw];[hw][sw]psnr=shortest=1" \
         -f null - >"$log" 2>&1
     rc=$?
@@ -108,13 +115,13 @@ run_case() {
     local min
     min=$(grep -oE 'PSNR .* min:[0-9.inf]+' "$log" | tail -1 | sed 's/.* min://')
     if [ -z "$min" ]; then
-        echo "FAIL: $name - no PSNR in the log (no frames compared)"
+        echo "FAIL: $name - no frames compared: QSV and software timestamps never overlap"
         fail=$((fail + 1))
         return
     fi
 
     if [ "$min" != "inf" ] && awk -v m="$min" -v t="$MIN_PSNR" 'BEGIN { exit !(m < t) }'; then
-        echo "FAIL: $name - QSV frames are mistimed after the seek: min PSNR $min dB against software; 0022 is missing"
+        echo "FAIL: $name - QSV frames are mistimed: min PSNR $min dB against software; 0022 is missing"
         fail=$((fail + 1))
         return
     fi
@@ -130,8 +137,9 @@ echo
 
 for case in $CASES; do
     case "$case" in
-        h264)  run_case h264 h264-320x240-scroll-gop30.mkv ;;
-        mpeg2) run_case mpeg2 mpeg2-320x240-scroll-gop15.mkv ;;
+        h264)  run_case h264 h264-320x240-scroll-gop30.mkv -ss "$SEEK" -t 0.5 ;;
+        mpeg2) run_case mpeg2 mpeg2-320x240-scroll-gop15.mkv -ss "$SEEK" -t 0.5 ;;
+        nopts) run_case nopts h264-320x240-scroll-gop30.mkv -t 0.5 -bsf:v setts=pts=NOPTS ;;
         *) echo "unknown case: $case" >&2; exit 2 ;;
     esac
 done
