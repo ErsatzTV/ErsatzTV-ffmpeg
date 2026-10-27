@@ -55,16 +55,22 @@ last_verified:
   date: 2026-10-27
   builds:
     without_patch: n8.1.2-etv.dev.699b3b94   # CI build of #83; same tree as main d146f5a
-    with_patch: n8.1.2-etv.dev.d146f5a6      # linux64, main d146f5a + this patch
+    with_patch: n8.1.2-etv.dev.bd2222ff      # CI build of this PR (linux64, win64)
   how: >-
     tests/qsvdec-corrupted-leading.sh on Arc A750 (8086:56a1) and Arc A380
-    (8086:56a5), Arch Linux, and Intel UHD 620 (KBL, 8086:5917), Debian 13,
-    iHD 25.2.3, libmfx1 22.5.4, libvpl 2.14.0: the unpatched build fails
-    open_gop (91 frames from -0.033 s), the patched build passes (90 frames
-    from 0 s, min PSNR inf); intra_refresh passes with both (120 frames
-    against 102). Stock n9.0.2 fails open_gop. The first 3 s of the H.264
-    film clip: 78 QSV frames unpatched (two concealed B-frames first), 76
-    patched, bit-exact with software, on all three. tests/qsvdec-negative-pts.sh
-    and tests/qsvdec-pkt-dts.sh still pass. HEVC open-GOP and MPEG-2 clips
-    decode the same with and without the patch.
+    (8086:56a5), Arch Linux, Intel UHD 620 (KBL, 8086:5917), Debian 13, iHD
+    25.2.3, libmfx1 22.5.4, libvpl 2.14.0, and the same ffmpeg commands on
+    Intel N150 graphics (ADL-N, 8086:46d4), Windows 11, driver 32.0.101.7092:
+    the unpatched build fails open_gop (91 frames from -0.033 s), the patched
+    build passes (90 frames from 0 s, min PSNR inf); intra_refresh passes
+    with both (120 frames against 102). Stock n9.0.2 fails open_gop. The
+    first 3 s of the H.264 film clip: 78 QSV frames unpatched (two concealed
+    B-frames first), 76 patched, bit-exact with software, on all four.
+    tests/qsvdec-negative-pts.sh and tests/qsvdec-pkt-dts.sh still pass.
+    HEVC open-GOP and MPEG-2 clips decode the same with and without the
+    patch. ErsatzTV next main (b80e19f) qsv suite on the N150 (Windows) and
+    the KBL (Debian): fixtures 558/558 with both builds; external media
+    fixes the film clip on both (2 frames late unpatched), 30 -> 31 of 32
+    on the N150 and 29 -> 30 of 32 on the KBL. The other failures are
+    unrelated and the same with both builds.
 remove_when: "Upstream qsvdec drops the runtime's corrupted leading frames"
