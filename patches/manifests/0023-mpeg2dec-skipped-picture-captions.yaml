@@ -49,16 +49,21 @@ last_verified:
   version: n8.1.2
   date: 2026-10-27
   builds:
-    without_patch: n8.1.2-etv.dev.e67744ce   # main e67744c
-    with_patch: n8.1.2 + this patch only      # minimal Linux build, --enable-vaapi
+    without_patch: n8.1.2-etv.dev.e67744ce   # main e67744c; etv.6 behaves the same
+    with_patch: n8.1.2-etv.dev.570be75b      # linux64, main e67744c + this patch
   how: >-
     tests/mpeg2dec-skipped-picture-captions.sh on Intel Arc (DG2) with the
-    iHD VAAPI driver, Arch Linux: the unpatched dev build fails both cases
+    iHD VAAPI driver, Arch Linux: the unpatched build fails both cases
     (1680-byte captions on decode; "Access unit too large" from h264_vaapi);
     the patched build passes both, 30/30 frames with 60 bytes each. Stock
-    n9.0.2 fails the decode case. The original recording decodes with 60
-    bytes on every frame with the patch, and ErsatzTV next's VAAPI
-    transcode and deinterlace cases for it pass 2/2 (transcode fails on the
-    unpatched build). Not yet verified on a full patched ETV build or on
-    other accelerators.
+    n9.0.2 fails the decode case.
+    ErsatzTV next's VAAPI external media suite, Linux, with the original
+    recording: its transcode case fails on etv.6 and the unpatched dev build
+    (28/29) and passes with the patched build (29/29, no other case changed)
+    on Intel Kaby Lake (iHD), Intel Haswell (i965), an AMD Picasso APU
+    (radeonsi) and AMD Polaris (radeonsi). The software suite with the
+    patched build passes every fixture and every external media case.
+    QSV, CUDA, VideoToolbox and the Windows and macOS builds were not tested
+    with the patch; CUDA and VideoToolbox already passed the recording
+    unpatched, because their encoders accept the oversized caption SEI.
 remove_when: "Upstream mpeg12dec drops the captions of pictures it skips"
