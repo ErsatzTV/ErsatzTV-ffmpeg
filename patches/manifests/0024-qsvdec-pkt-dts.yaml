@@ -1,0 +1,62 @@
+id: qsvdec-pkt-dts
+patch: 0024-avcodec-qsvdec-do-not-set-pkt_dts-from-a-later-packet.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. qsvdec.c in origin/master (6b05263b44) still lets lavc set
+  # pkt_dts from the packet being decoded, and n9.0.2 fails the reproducer.
+  commits: []
+dependencies: []              # touches the decoder caps only; applies after 0013, 0021 and 0022
+platforms:
+  - linux-qsv
+  - windows-qsv
+reproducer: tests/qsvdec-pkt-dts.sh
+samples:
+  - samples/mpeg2-320x240-open-gop-dup-pts.mkv   # samples/make-mpeg2-open-gop-dup-pts.sh
+failure_without_patch:
+  - "no error: ffmpeg exits 0, but every QSV frame after the first is late"
+  - "reproducer: min PSNR ~14.6 dB against software decode paired by timestamp"
+success_with_patch:
+  - "reproducer: min PSNR ~68 dB against software (frames after the first)"
+notes:
+  - "MECHANISM: lavc's decode_simple_internal() sets frame->pkt_dts to the
+     dts of the packet it just passed in, unless the decoder has
+     FF_CODEC_CAP_SETS_PKT_DTS. qsvdec returns a frame async_depth packets
+     after its own, so the dts belongs to a later frame. When the pts has a
+     fault (a pts not greater than the last one), guess_correct_pts() counts
+     it against pts but finds the late dts monotonic, and switches
+     best_effort_timestamp to that dts for the rest of the stream."
+  - "The trigger is a stream that starts on an open GOP whose leading B-frame
+     repeats the I-frame's pts, as stream copies cut from a DVD rip do. Software
+     decoders drop that B-frame and keep pts; QSV frames all shift by the
+     decoder delay (2 frames in the sample on an Arc A750 and an A380)."
+  - "The patch only sets FF_CODEC_CAP_SETS_PKT_DTS, as mediacodec, v4l2_m2m,
+     mmal and libopenh264 do. qsvdec's pool frames come from ff_get_buffer(),
+     which never sets pkt_dts, so frames leave with AV_NOPTS_VALUE and
+     best_effort_timestamp uses the pts."
+  - "Found with a DVD MPEG-2 clip in ErsatzTV next's external media suite:
+     QSV video several frames late from the start of the item."
+last_verified:
+  version: n8.1.2
+  date: 2026-10-27
+  builds:
+    without_patch: n8.1.2-etv.dev.c53d22b7   # CI build of #81's head; same tree as main 457b336
+    with_patch: n8.1.2-etv.dev.7f3082b2      # CI build of this PR (linux64, win64)
+  how: >-
+    tests/qsvdec-pkt-dts.sh on Arc A750 (8086:56a1) and Arc A380 (8086:56a5),
+    Arch Linux, and the same ffmpeg command on Intel N150 graphics (ADL-N,
+    8086:46d4), Windows 11, driver 32.0.101.7092: the unpatched build fails
+    (min PSNR 14.6 dB), the patched build passes (68.1 dB). Stock n9.0.2
+    fails the same way. A DVD MPEG-2 clip that starts this way, first 10 s,
+    QSV against software paired by timestamp: 232 of 237 frames below 30 dB
+    unpatched, 0 of 241 patched, on all three. tests/qsvdec-negative-pts.sh still passes
+    with the patch. Raw H.264 and MPEG-2 elementary streams (no packet pts)
+    decode to the same frames and timestamps with and without the patch.
+    ErsatzTV next main (b80e19f) qsv suite in Buildbot on the N150 (Windows)
+    and on Intel UHD 620 (KBL, 8086:5917, Debian 13, iHD 25.2.3, libmfx1
+    22.5.4): fixtures 558/558 with both builds; external media fixes both
+    cases of the DVD clip (6 frames late unpatched), 25 -> 27 of 29 on the
+    N150 and 24 -> 26 of 29 on the KBL. The other failures are unrelated and
+    the same with both builds.
+remove_when: "Upstream qsvdec no longer takes pkt_dts from the packet being decoded"

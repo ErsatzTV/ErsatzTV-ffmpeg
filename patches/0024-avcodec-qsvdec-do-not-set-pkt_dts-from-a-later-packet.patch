@@ -1,0 +1,23 @@
+qsvdec frames carried the dts of the packet that was being decoded when the
+runtime returned them, several packets after their own. When the pts had a
+fault (two frames with the same pts, as on an MPEG-2 open GOP whose leading
+B-frame repeats the I-frame's pts), guess_correct_pts() switched
+best_effort_timestamp to that dts for the rest of the stream, and ffmpeg
+played every frame late by the decoder's delay (2 frames on Arc A750 and A380).
+
+Set FF_CODEC_CAP_SETS_PKT_DTS so lavc leaves pkt_dts unset, as it does for
+the other asynchronous wrappers (mediacodec, v4l2_m2m, mmal, libopenh264).
+
+diff --git a/libavcodec/qsvdec.c b/libavcodec/qsvdec.c
+--- a/libavcodec/qsvdec.c
++++ b/libavcodec/qsvdec.c
+@@ -1280,7 +1280,8 @@
+     .p.priv_class   = &x##_qsv_class, \
+     .hw_configs     = qsv_hw_configs, \
+     .p.wrapper_name = "qsv", \
+-    .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE | FF_CODEC_CAP_EXPORTS_CROPPING, \
++    .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE | FF_CODEC_CAP_EXPORTS_CROPPING | \
++                      FF_CODEC_CAP_SETS_PKT_DTS, \
+ }; \
+ 
+ #define DEFINE_QSV_DECODER(x, X, bsf_name) DEFINE_QSV_DECODER_WITH_OPTION(x, X, bsf_name, options)
