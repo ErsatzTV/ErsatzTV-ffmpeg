@@ -53,7 +53,7 @@ last_verified:
     unpatched, 0 of 241 patched, on all three. tests/qsvdec-negative-pts.sh still passes
     with the patch. Raw H.264 and MPEG-2 elementary streams (no packet pts)
     decode to the same frames and timestamps with and without the patch.
-    ErsatzTV next main (b80e19f) qsv suite in Buildbot on the N150 (Windows)
+    ErsatzTV next main (b80e19f) qsv suite on the N150 (Windows)
     and on Intel UHD 620 (KBL, 8086:5917, Debian 13, iHD 25.2.3, libmfx1
     22.5.4): fixtures 558/558 with both builds; external media fixes both
     cases of the DVD clip (6 frames late unpatched), 25 -> 27 of 29 on the

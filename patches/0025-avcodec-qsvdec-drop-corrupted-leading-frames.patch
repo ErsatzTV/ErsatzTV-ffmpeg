@@ -1,0 +1,53 @@
+When an H.264 stream starts on an open GOP (a recovery point, not an IDR),
+the leading pictures reference a GOP that was cut off. h264dec drops them
+until its recovery point. qsvdec output the runtime's concealed pictures
+instead, so the picture started on garbage and late by as many frames.
+
+Drop frames the runtime marks as corrupted until the first frame that is not
+corrupted or is an I picture, unless output_corrupt or showall is set. Reset
+on flush. The runtime marks these pictures corrupted for H.264; it drops
+HEVC's RASL pictures itself, and doesn't flag MPEG-2 leading B-frames, so
+this changes nothing for those.
+
+diff --git a/libavcodec/qsvdec.c b/libavcodec/qsvdec.c
+--- a/libavcodec/qsvdec.c
++++ b/libavcodec/qsvdec.c
+@@ -107,6 +107,7 @@
+ 
+     AVFifo *async_fifo;
+     int zero_consume_run;
++    int recovered;
+     int reinit_flag;
+ 
+     enum AVPixelFormat orig_pix_fmt;
+@@ -948,6 +949,22 @@
+ 
+         outsurf = &aframe.frame->surface;
+ 
++        /* Like h264dec before its recovery point: the runtime outputs the
++         * leading pictures of an open GOP at the start of the stream as
++         * concealed pictures, where software decoders drop them. */
++        if (!q->recovered) {
++            if (outsurf->Data.Corrupted &&
++                !(aframe.frame->dec_info.FrameType & MFX_FRAMETYPE_I) &&
++                !(avctx->flags & AV_CODEC_FLAG_OUTPUT_CORRUPT) &&
++                !(avctx->flags2 & AV_CODEC_FLAG2_SHOW_ALL)) {
++                av_frame_unref(frame);
++                /* a drain call that returns no frame would end the stream */
++                return avpkt->size ? bs.DataOffset :
++                       qsv_decode(avctx, q, frame, got_frame, avpkt);
++            }
++            q->recovered = 1;
++        }
++
+         frame->pts = MFX_PTS_TO_PTS(outsurf->Data.TimeStamp, avctx->pkt_timebase);
+ #if QSV_VERSION_ATLEAST(1, 34)
+         if ((avctx->export_side_data & AV_CODEC_EXPORT_DATA_FILM_GRAIN) &&
+@@ -1258,6 +1275,7 @@
+ 
+     s->qsv.orig_pix_fmt = AV_PIX_FMT_NONE;
+     s->qsv.initialized = 0;
++    s->qsv.recovered = 0;
+ }
+ 
+ #define OFFSET(x) offsetof(QSVDecContext, x)
