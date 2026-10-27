@@ -1,0 +1,64 @@
+id: mpeg2dec-skipped-picture-captions
+patch: 0023-avcodec-mpeg12dec-drop-captions-of-skipped-pictures.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. mpeg12dec.c in origin/master (6b05263b44) still leaves
+  # a53_buf_ref alone at every skip_frame site, and n9.0.2 fails the
+  # reproducer's decode case.
+  commits: []
+dependencies: []              # no other patch touches mpeg12dec.c
+platforms:
+  - all                       # decoder bug; h264_vaapi is where it is fatal
+reproducer: tests/mpeg2dec-skipped-picture-captions.sh
+samples:
+  - samples/mpeg2-640x480-a53cc-midgop.ts   # samples/make-mpeg2-a53cc-midgop.sh
+failure_without_patch:
+  - "[h264_vaapi] Access unit too large: 8192 < 14608."
+  - "[h264_vaapi] Failed to write extra header 0: -28."
+  - "[h264_vaapi] Encode failed: No space left on device."
+  - "reproducer decode case: a frame carries 1680 bytes of captions (limit 93)"
+success_with_patch:
+  - "every decoded frame carries its own 60 bytes of captions"
+  - "h264_vaapi encodes the sample and the output keeps captions on every frame"
+notes:
+  - "MECHANISM: mpeg_decode_a53_cc() appends each picture's caption user data
+     to a53_buf_ref, and only mpeg_field_start() moves it onto a frame. The
+     slice loop in decode_chunks() skips open-GOP B-frames with no previous
+     reference, P-frames before sync and pictures dropped by -skip_frame
+     without starting a field, so their captions stay buffered and land on
+     the next frame that is decoded."
+  - "A stream that starts mid-GOP puts every caption before its first I-frame
+     on that frame: 1680 bytes (28 frames' worth) in the sample, and the
+     open-GOP B-frames after it put 180 bytes on the next P-frame.
+     ff_alloc_a53_sei() writes cc_count as (size / 3) & 0x1f, so encoders
+     that accept the oversized SEI write a malformed one. h264_vaapi refuses
+     it once it no longer fits the 1 KiB packed header buffer."
+  - "The captions are dropped where the picture is skipped, not at the
+     picture start code: DVD captions are GOP user data that comes before
+     the picture header, and clearing there would lose them."
+  - "The 'Invalid frame dimensions 0x0' errors such a stream logs come from
+     the avformat_find_stream_info() probe decoder before it reaches a
+     sequence header. They are unrelated: the real decoder gets the sequence
+     header as extradata."
+  - "Found with a broadcast recording that starts mid-GOP, through ErsatzTV
+     next's VAAPI transcode. Its deinterlaced variant passed only because
+     deinterlace_vaapi drops the first frame, the one with the pile-up."
+last_verified:
+  version: n8.1.2
+  date: 2026-10-27
+  builds:
+    without_patch: n8.1.2-etv.dev.e67744ce   # main e67744c
+    with_patch: n8.1.2 + this patch only      # minimal Linux build, --enable-vaapi
+  how: >-
+    tests/mpeg2dec-skipped-picture-captions.sh on Intel Arc (DG2) with the
+    iHD VAAPI driver, Arch Linux: the unpatched dev build fails both cases
+    (1680-byte captions on decode; "Access unit too large" from h264_vaapi);
+    the patched build passes both, 30/30 frames with 60 bytes each. Stock
+    n9.0.2 fails the decode case. The original recording decodes with 60
+    bytes on every frame with the patch, and ErsatzTV next's VAAPI
+    transcode and deinterlace cases for it pass 2/2 (transcode fails on the
+    unpatched build). Not yet verified on a full patched ETV build or on
+    other accelerators.
+remove_when: "Upstream mpeg12dec drops the captions of pictures it skips"
