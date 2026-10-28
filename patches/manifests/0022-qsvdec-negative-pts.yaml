@@ -64,20 +64,27 @@ last_verified:
   version: n8.1.2
   date: 2026-10-27
   builds:
-    # first version (#77): n8.1.2-etv.dev.c53d22b7, CI build of main 457b336
+    # first version (#77): n8.1.2-etv.dev.36c65446, CI build of main 36c6544
     without_patch: n8.1.2-etv.6
-    with_patch: n8.1.2-etv.dev.457b3367     # linux64, main 457b336 with this version
+    with_patch: n8.1.2-etv.dev.699b3b94     # CI build of this PR (linux64, win64)
   how: >-
-    This version, on Arc A750 (8086:56a1) and Arc A380 (8086:56a5), Arch
-    Linux: tests/qsvdec-negative-pts.sh passes all three cases (inf / 69.0 dB /
-    inf); the first version fails nopts (no frames compared) and stock n9.0.2
-    fails h264 and mpeg2 (14.2 / 14.9 dB). QSV decode of raw H.264 and MPEG-2
-    streams and of H.264 and MPEG-2 in AVI gives the same frame count and
-    timestamps as stock n9.0.2; the first version put them at about -95443 s.
+    This version: tests/qsvdec-negative-pts.sh on Arc A750 (8086:56a1) and Arc
+    A380 (8086:56a5), Arch Linux, and the same ffmpeg commands on Intel N150
+    graphics (ADL-N, 8086:46d4), Windows 11, driver 32.0.101.7092: all three
+    cases pass (inf / 69.0 dB / inf); the first version fails nopts (no
+    frames compared) on all three, and stock n9.0.2 fails h264 and mpeg2
+    (14.2 / 14.9 dB). QSV decode of raw H.264 and MPEG-2 streams and of H.264
+    and MPEG-2 in AVI gives the same frame count and timestamps as stock
+    n9.0.2; the first version put them at about -95443 s.
+    tests/qsvdec-pkt-dts.sh (0024) still passes. ErsatzTV next main
+    (b80e19f) qsv suite on the N150 (Windows) and on Intel UHD
+    620 (KBL, 8086:5917, Debian 13, iHD 25.2.3, libmfx1 22.5.4): the same
+    results as the first version (fixtures 558/558; external media
+    unchanged, including three AVI clips, which next decodes with
+    -fflags +genpts).
     First version, 2026-10-25: etv.6 fails both seek cases (min PSNR 14.2 /
     14.9 dB), the patched build (etv.dev.64319695, main 6431969) passes both
-    (inf / 69.0 dB) on the A750, the A380 and Intel N150 graphics (ADL-N,
-    8086:46d4), Windows 11, driver 32.0.101.7092, win64 builds. ErsatzTV
+    (inf / 69.0 dB) on the A750, the A380 and the N150 (win64). ErsatzTV
     next's qsv suite with its seek_mid_gop test: etv.6 fails both
     seek_mid_gop cases (6 / 4 frames late) on all three; patched 559/559 on
     the A750, the A380 and the N150.

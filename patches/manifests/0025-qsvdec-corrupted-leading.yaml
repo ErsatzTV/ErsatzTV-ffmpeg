@@ -1,0 +1,76 @@
+id: qsvdec-corrupted-leading
+patch: 0025-avcodec-qsvdec-drop-corrupted-leading-frames.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. qsvdec.c in origin/master (6b05263b44) outputs every
+  # surface the runtime returns, and n9.0.2 fails the reproducer.
+  commits: []
+dependencies: []              # context overlaps 0022 and 0024; applies after them
+platforms:
+  - linux-qsv
+  - windows-qsv
+reproducer: tests/qsvdec-corrupted-leading.sh
+samples:
+  - samples/h264-320x240-open-gop-start.mkv       # samples/make-h264-open-gop-start.sh
+  - samples/h264-320x240-intra-refresh-mid.mkv    # samples/make-h264-open-gop-start.sh
+failure_without_patch:
+  - "no error: QSV outputs concealed leading pictures before the first I-frame"
+  - "reproducer open_gop: QSV outputs 91 frames from -0.033 s, software 90 from 0 s"
+  - "ErsatzTV next: an H.264 clip that starts on an open GOP fails external media
+     with 'output matches a scale-and-pad of the source 2 frames late'"
+success_with_patch:
+  - "reproducer open_gop: 90 frames from 0 s, bit-exact with software (min PSNR inf)"
+  - "reproducer intra_refresh: QSV still outputs at least as many frames as software"
+notes:
+  - "MECHANISM: an H.264 stream that starts on a non-IDR I-frame (a recovery
+     point in an open GOP) has leading B-frames that reference the GOP that
+     was cut off. h264dec doesn't output frames before its recovery point
+     unless output_corrupt is set. The runtime conceals them and returns them
+     with mfxFrameData.Corrupted set, and qsvdec output them, so the picture
+     started on garbage and every frame after was late by as many frames."
+  - "The patch drops non-I frames with Corrupted set until the first frame
+     that isn't, honouring output_corrupt and showall like h264dec, and
+     re-arms on flush (seeks). Later corrupted frames are still output."
+  - "Scope: H.264 only in practice. vpl-gpu-rt already drops HEVC RASL
+     pictures after a CRA (QSV matches software with or without the patch).
+     Its MPEG-2 decoder only flags a frame when a reference it has is in
+     error, so a leading B-frame with no forward reference comes out
+     unflagged and this patch doesn't drop it (mfx_mpeg2_decode.cpp,
+     umc_mpeg2_frame.cpp). MPEG-2 needs the closed_gop test mpeg12dec does,
+     which the runtime doesn't report."
+  - "Risk checked: intra-refresh H.264 cut mid-refresh has no I-frame until
+     much later. If the runtime flagged every frame until then, the patch
+     would drop them all. On the runtimes tested it doesn't flag them; QSV
+     outputs 120 frames where software waits for the recovery point and
+     outputs 102. The reproducer's intra_refresh case guards this."
+  - "The samples repeat SPS/PPS before every keyframe. With them only in
+     extradata, QSV can't start a stream on a non-IDR picture at all
+     ('video_get_buffer: image parameters invalid'), a separate problem."
+  - "Found with an H.264 film clip in ErsatzTV next's external media suite:
+     QSV output two concealed frames before the first I-frame."
+last_verified:
+  version: n8.1.2
+  date: 2026-10-27
+  builds:
+    without_patch: n8.1.2-etv.dev.699b3b94   # CI build of #83; same tree as main d146f5a
+    with_patch: n8.1.2-etv.dev.bd2222ff      # CI build of this PR (linux64, win64)
+  how: >-
+    tests/qsvdec-corrupted-leading.sh on Arc A750 (8086:56a1) and Arc A380
+    (8086:56a5), Arch Linux, Intel UHD 620 (KBL, 8086:5917), Debian 13, iHD
+    25.2.3, libmfx1 22.5.4, libvpl 2.14.0, and the same ffmpeg commands on
+    Intel N150 graphics (ADL-N, 8086:46d4), Windows 11, driver 32.0.101.7092:
+    the unpatched build fails open_gop (91 frames from -0.033 s), the patched
+    build passes (90 frames from 0 s, min PSNR inf); intra_refresh passes
+    with both (120 frames against 102). Stock n9.0.2 fails open_gop. The
+    first 3 s of the H.264 film clip: 78 QSV frames unpatched (two concealed
+    B-frames first), 76 patched, bit-exact with software, on all four.
+    tests/qsvdec-negative-pts.sh and tests/qsvdec-pkt-dts.sh still pass.
+    HEVC open-GOP and MPEG-2 clips decode the same with and without the
+    patch. ErsatzTV next main (b80e19f) qsv suite on the N150 (Windows) and
+    the KBL (Debian): fixtures 558/558 with both builds; external media
+    fixes the film clip on both (2 frames late unpatched), 30 -> 31 of 32
+    on the N150 and 29 -> 30 of 32 on the KBL. The other failures are
+    unrelated and the same with both builds.
+remove_when: "Upstream qsvdec drops the runtime's corrupted leading frames"
