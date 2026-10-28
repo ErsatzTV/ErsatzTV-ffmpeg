@@ -36,21 +36,10 @@ notes:
      which carry the header in-band on keyframes) are unchanged."
   - "Both parts are needed. With the header in front of the bare frames but
      no 0D start code (dump_extra on the ASF stream), the unpatched decoder
-     segfaults (rc 139). The patched one doesn't treat that layout as start
-     codes, since the packet begins with the extradata's leading byte; the
-     runtime returns MFX_ERR_UNDEFINED_BEHAVIOR for every packet and then
-     MFX_WRN_DEVICE_BUSY forever, and qsvdec's unbounded DEVICE_BUSY retry
-     (upstream) never exits, even on SIGTERM. Not a layout a demuxer produces;
-     the retry loop is a separate problem."
+     segfaults instead of decoding."
   - "Matroska that was remuxed from ASF keeps the bare packets and fails the
      same way, so the sample is Matroska. ffmpeg has no VC-1 encoder and its
      muxers keep start codes, so the generator writes the file by hand."
-  - "WMV3 (VC-1 Simple/Main) has no QSV decoder in FFmpeg and is unaffected."
-  - "ASF packets carry dts but no pts. qsvdec passes only pts to the runtime,
-     so without -fflags +genpts the frames get made-up timestamps (from 0 at
-     ~30 fps for a 59.94 fps stream) and -ss can't trim them. Not changed by
-     this patch (packet props are copied); with +genpts, which ErsatzTV next
-     always sets, QSV matches software. A separate qsvdec issue."
   - "The flush re-arm is covered by a seek, not by the reproducer: the samples
      have one keyframe."
   - "Found with a WVC1 .wmv clip in ErsatzTV next's external media suite:
@@ -60,15 +49,21 @@ last_verified:
   version: n8.1.2
   date: 2026-10-27
   builds:
-    without_patch: n8.1.2-etv.dev.815ab3af   # CI build of #84's head; same tree as main 9cfc257
-    with_patch: n8.1.2-etv.dev.0026dec1      # local linux64 build of main 9cfc257 + this patch
+    without_patch: n8.1.2-etv.dev.bd2222ff   # CI build of #84; same patches as main 9cfc257
+    with_patch: n8.1.2-etv.dev.180a77f1      # CI build of this PR (linux64, win64)
   how: >-
     tests/qsvdec-vc1-start-codes.sh on Intel UHD 620 (KBL, 8086:5917), Debian
-    13, iHD 25.2.3, libmfx1 22.5.4, libvpl 2.14.0: the unpatched build fails
-    bare and passes start_codes; the patched build passes both (30 frames,
-    bit-exact). Arc A750 (DG2, no VC-1 decode): both cases skip. A 720p59.94
-    WVC1 .wmv clip: unpatched 0 frames; patched 2790 of 2790,
-    bit-exact with software by frame index; with +genpts and -ss 7, 2417 of
-    2417 bit-exact with software. Blu-ray VC-1 in Matroska (two clips,
-    1094 and 1799 frames): QSV output identical with and without the patch.
+    13, iHD 25.2.3, libmfx1 22.5.4, libvpl 2.14.0, and the same ffmpeg
+    commands on Intel N150 graphics (ADL-N, 8086:46d4), Windows 11, driver
+    32.0.101.7092: the unpatched build fails bare (0 frames) and passes
+    start_codes; the patched build passes both (30 frames, bit-exact). Arc
+    A750 (DG2, no VC-1 decode): both cases skip. On the KBL, with the patch
+    applied to main in a local build: a 720p59.94 WVC1 .wmv clip: unpatched 0
+    frames; patched 2790 of 2790, bit-exact with software by frame index;
+    after a seek (-ss 7, with +genpts), 2417 of 2417 bit-exact with software.
+    Blu-ray VC-1 in Matroska (two clips, 1094 and 1799 frames): QSV output
+    identical with and without the patch. ErsatzTV next main (b80e19f) qsv
+    suite: fixtures 558/558 with both builds on the N150 and the KBL; external
+    media fixes the WVC1 clip on both, 31 -> 32 of 32 on the N150 and 30 -> 31
+    of 32 on the KBL.
 remove_when: "Upstream qsvdec gives the runtime VC-1 start codes and the extradata header"
