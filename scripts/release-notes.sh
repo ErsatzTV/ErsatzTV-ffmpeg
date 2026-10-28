@@ -1,14 +1,21 @@
 #!/bin/sh
-# Usage: release-notes.sh <docker index digest> [macOS toolchain dir]
+# Usage: release-notes.sh [--develop <develop tag> <last release>] <docker index digest> [macOS toolchain dir]
 # Prints GitHub release notes for the revision in release.json: the
 # hand-written release-notes/<tag>.md, then what changed since the previous
 # revision tag (compared numerically, not as SemVer), pins, and verification.
+# With --develop, the notes are for a develop build of HEAD: the commits since
+# <last release> replace the hand-written notes.
 # The toolchain dir holds one Markdown list item per macOS target, written by
-# the release workflow's build job.
+# build.yml.
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
+develop_tag='' last_release=''
+if [ "${1:-}" = --develop ]; then
+    develop_tag=$2 last_release=$3
+    shift 3
+fi
 index=$1 toolchain=${2:-}
 
 version=$(jq -er '.ffmpeg.version' release.json)
@@ -17,30 +24,58 @@ upstream_commit=$(jq -er '.ffmpeg.commit' release.json)
 revision=$(jq -er '.revision' release.json)
 tag="$version-$revision"
 image=ghcr.io/ersatztv/ersatztv-ffmpeg
+extra="etv.$revision"
+ref=$tag
+revision_note="ETV revision $revision"
 
-[ -f "release-notes/$tag.md" ] || { echo "release-notes: missing release-notes/$tag.md" >&2; exit 1; }
+if [ -n "$develop_tag" ]; then
+    tag=$develop_tag
+    image=ghcr.io/ersatztv/ersatztv-ffmpeg-develop
+    commit=$(git rev-parse HEAD)
+    extra="etv.dev.$(printf '%s' "$commit" | cut -c1-8)"
+    ref=$commit
+    revision_note="release.json revision $revision"
+elif [ ! -f "release-notes/$tag.md" ]; then
+    echo "release-notes: missing release-notes/$tag.md" >&2
+    exit 1
+fi
 
 key() { echo "$1" | awk -F'[.-]' '{ printf "%d %d %d %d\n", $1, $2, $3, $4 }'; }
-current=$(key "$tag")
-prev=$(git tag -l | grep -Ex '[0-9]+\.[0-9]+\.[0-9]+-[0-9]+' | while read -r t; do
-    echo "$(key "$t") $t"
-done | sort -k1,1n -k2,2n -k3,3n -k4,4n | awk -v cur="$current" '
-    { split(cur, c, " "); less = 0
-      for (i = 1; i <= 4; i++) if ($i != c[i]) { less = $i < c[i]; break }
-      if (less) prev = $5 }
-    END { print prev }')
+if [ -n "$develop_tag" ]; then
+    prev=$last_release
+else
+    current=$(key "$tag")
+    prev=$(git tag -l | grep -Ex '[0-9]+\.[0-9]+\.[0-9]+-[0-9]+' | while read -r t; do
+        echo "$(key "$t") $t"
+    done | sort -k1,1n -k2,2n -k3,3n -k4,4n | awk -v cur="$current" '
+        { split(cur, c, " "); less = 0
+          for (i = 1; i <= 4; i++) if ($i != c[i]) { less = $i < c[i]; break }
+          if (less) prev = $5 }
+        END { print prev }')
+fi
 
-cat "release-notes/$tag.md"
-echo
+if [ -n "$develop_tag" ]; then
+    echo "Develop build of [\`$(git rev-parse --short=12 HEAD)\`](https://github.com/ErsatzTV/ErsatzTV-ffmpeg/commit/$commit) for testing; not a release. Develop builds are pruned."
+    echo
+    if [ -n "$prev" ]; then
+        echo "## Commits since \`$prev\`"
+        echo
+        git log --format='- %h %s' "$prev..HEAD"
+        echo
+    fi
+else
+    cat "release-notes/$tag.md"
+    echo
+fi
 echo "## Build"
 echo
-echo "- FFmpeg \`$upstream_tag\` (\`$upstream_commit\`), ETV revision $revision"
-echo "- \`ffmpeg -version\`: \`n$version-etv.$revision\` (native), \`$version-etv.$revision\` (docker)"
+echo "- FFmpeg \`$upstream_tag\` (\`$upstream_commit\`), $revision_note"
+echo "- \`ffmpeg -version\`: \`n$version-$extra\` (native), \`$version-$extra\` (docker)"
 echo "- Docker: \`$image:$tag@$index\`, dependency images:"
 jq -r 'to_entries[] | "  - \(.key): `\(.value.image)`"' images/linux/deps.lock.json
 echo "- Native toolchain: [ErsatzTV/FFmpeg-Builds@$(git -C native/FFmpeg-Builds rev-parse --short=12 HEAD)](https://github.com/ErsatzTV/FFmpeg-Builds/commit/$(git -C native/FFmpeg-Builds rev-parse HEAD)), dependency images:"
 jq -r '.images | to_entries[] | "  - \(.key): `\(.value)`"' native/images.lock.json
-echo "- macOS: built natively for macOS $(jq -er .deployment_target native/macos/deps.json) and later, static dependencies from [\`native/macos/deps.json\`](https://github.com/ErsatzTV/ErsatzTV-ffmpeg/blob/$tag/native/macos/deps.json): $(jq -r '[.deps[] | "\(.name) \(.version)"] | join(", ")' native/macos/deps.json)"
+echo "- macOS: built natively for macOS $(jq -er .deployment_target native/macos/deps.json) and later, static dependencies from [\`native/macos/deps.json\`](https://github.com/ErsatzTV/ErsatzTV-ffmpeg/blob/$ref/native/macos/deps.json): $(jq -r '[.deps[] | "\(.name) \(.version)"] | join(", ")' native/macos/deps.json)"
 if [ -n "$toolchain" ]; then
     for f in "$toolchain"/*.md; do sed 's/^/  /' "$f"; done
 fi
@@ -63,7 +98,7 @@ if [ -n "$prev" ]; then
 fi
 echo "Applied in order to every platform:"
 echo
-for p in patches/*.patch; do echo "- [\`$(basename "$p")\`](https://github.com/ErsatzTV/ErsatzTV-ffmpeg/blob/$tag/$p)"; done
+for p in patches/*.patch; do echo "- [\`$(basename "$p")\`](https://github.com/ErsatzTV/ErsatzTV-ffmpeg/blob/$ref/$p)"; done
 echo
 echo "## Verify"
 echo
@@ -73,7 +108,7 @@ echo "gh attestation verify <archive> --repo ErsatzTV/ErsatzTV-ffmpeg"
 echo "gh attestation verify oci://$image@$index --repo ErsatzTV/ErsatzTV-ffmpeg"
 echo '```'
 echo
-echo "Source: \`ffmpeg-$version.tar.bz2\` is the upstream release (sha256 \`$(jq -r '.ffmpeg.tarball_sha256' release.json)\`); \`ersatztv-ffmpeg-$tag-src.tar.xz\` is this repo and the native toolchain submodule at \`$tag\`; \`ersatztv-ffmpeg-$tag-macos-deps-src.tar\` is the source of the macOS dependencies."
+echo "Source: \`ffmpeg-$version.tar.bz2\` is the upstream release (sha256 \`$(jq -r '.ffmpeg.tarball_sha256' release.json)\`); \`ersatztv-ffmpeg-$tag-src.tar.xz\` is this repo and the native toolchain submodule at \`$ref\`; \`ersatztv-ffmpeg-$tag-macos-deps-src.tar\` is the source of the macOS dependencies."
 if [ -n "${GITHUB_RUN_ID:-}" ]; then
     echo
     echo "Built and tested by [run $GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."

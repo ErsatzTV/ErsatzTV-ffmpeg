@@ -38,6 +38,25 @@ gh workflow run ci.yml --ref main -f sign=true
 
 The dry run signs and notarizes the macOS builds and checks the signatures. It does not publish anything.
 
+## Make a develop build
+
+A develop build lets you test a commit in ErsatzTV and ErsatzTV Next before you spend a revision on it. Run the [develop workflow](../.github/workflows/develop.yml) on any branch:
+
+```sh
+gh workflow run develop.yml --ref <branch>
+```
+
+The workflow builds, tests, signs and notarizes the head commit like a release. Then it publishes:
+
+- A release `<ffmpeg version>-<short commit>-develop`, for example `8.1.2-07ab0301-develop`, in [ErsatzTV/ffmpeg-develop-builds](https://github.com/ErsatzTV/ffmpeg-develop-builds), with the same assets as a release.
+- A docker image `ghcr.io/ersatztv/ersatztv-ffmpeg-develop:<tag>`.
+
+`ffmpeg -version` shows `etv.dev.<short commit>`. A commit is built once; the workflow stops if its develop build already exists. Only the newest 100 develop builds are kept.
+
+If the branch changes the `native/FFmpeg-Builds` submodule, push that commit to the fork first.
+
+A develop build is not evidence for a release. Do the hardware tests again on the release files.
+
 ## Run the FATE sweep
 
 [FATE](https://ffmpeg.org/fate.html) is the FFmpeg test suite. The sweep runs it with and without the patch set, and shows the tests that fail only with the patches. Run it on a Linux computer with a C compiler, `nasm`, `make`, `rsync`, `curl` and `jq`:

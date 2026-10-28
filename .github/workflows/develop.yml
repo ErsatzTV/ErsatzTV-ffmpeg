@@ -1,0 +1,239 @@
+name: Develop
+
+# Builds, tests and publishes one commit of any branch as an immutable develop
+# build: a release in ErsatzTV/ffmpeg-develop-builds and an image in the
+# separate ersatztv-ffmpeg-develop package, so neither the release feed nor
+# the floating docker tags see it. Legacy and next can pin these to test a
+# change before it spends a revision; their release workflows refuse them.
+on:
+  workflow_dispatch:
+
+# prune-develop.sh relies on one run at a time
+concurrency:
+  group: develop
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DEVELOP_REPO: ErsatzTV/ffmpeg-develop-builds
+  IMAGE_NAME: ghcr.io/ersatztv/ersatztv-ffmpeg-develop
+  DEVELOP_KEEP: 100
+
+jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      last_release: ${{ steps.tag.outputs.last_release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # also proves the submodule commit is on the public fork
+      - name: Fetch native toolchain
+        run: git submodule update --init
+
+      - name: Develop tag
+        id: tag
+        run: |
+          out=$(sh scripts/develop-tag.sh "$GITHUB_SHA")
+          echo "$out" | tee -a "$GITHUB_OUTPUT"
+          echo "$out" | sed -n 's/^tag=/DEVELOP_TAG=/p' >> "$GITHUB_ENV"
+
+      - name: Check native dependency lock
+        run: sh scripts/check-native-lock.sh
+
+      - name: Login to container registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Check docker dependency lock
+        run: sh scripts/check-docker-lock.sh
+
+      - name: Check upstream and patch stack
+        run: sh scripts/check-upstream.sh "$RUNNER_TEMP/upstream"
+
+      - name: Bundle macOS dependency sources
+        run: sh native/macos/source-bundle.sh "$RUNNER_TEMP/ersatztv-ffmpeg-$DEVELOP_TAG-macos-deps-src.tar"
+
+      - name: Upload macOS dependency sources
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-deps-src
+          path: ${{ runner.temp }}/ersatztv-ffmpeg-*-macos-deps-src.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+      # a commit is built once; a fresh run would publish different bytes
+      - name: Check nothing is published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state=$(gh release view "$DEVELOP_TAG" --repo "$DEVELOP_REPO" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          [ "$state" != false ] || { echo "::error::$DEVELOP_TAG is already published"; exit 1; }
+          if docker buildx imagetools inspect "$IMAGE_NAME:$DEVELOP_TAG" >/dev/null 2>&1; then
+            echo "::error::$IMAGE_NAME:$DEVELOP_TAG exists; rerun the original run's publish job"; exit 1
+          fi
+
+  build:
+    needs: preflight
+    uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    with:
+      commit: ${{ github.sha }}
+      mode: dev
+      image: ghcr.io/ersatztv/ersatztv-ffmpeg-develop
+      version: ${{ needs.preflight.outputs.tag }}
+      sign: true
+      fail-fast: true
+      retention-days: 7
+    secrets:
+      APPLE_DEVELOPER_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
+      APPLE_DEVELOPER_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
+      AC_USERNAME: ${{ secrets.AC_USERNAME }}
+      AC_PASSWORD: ${{ secrets.AC_PASSWORD }}
+
+  publish:
+    name: Publish develop build
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      DEVELOP_TAG: ${{ needs.preflight.outputs.tag }}
+      LAST_RELEASE: ${{ needs.preflight.outputs.last_release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch native toolchain
+        run: git submodule update --init
+
+      - name: Download native builds
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: native-*
+          merge-multiple: true
+          path: dist
+
+      - name: Download macOS dependency sources
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: macos-deps-src
+          path: ${{ runner.temp }}/macos-deps-src
+
+      - name: Download macOS toolchains
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: toolchain-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/toolchain
+
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: digests-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+
+      - name: Login to container registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Create develop tag
+        id: index
+        run: |
+          out=$(sh scripts/docker-index.sh "$IMAGE_NAME" "$DEVELOP_TAG" "$RUNNER_TEMP/digests")
+          echo "$out" >> "$GITHUB_OUTPUT"
+          echo "### \`$IMAGE_NAME:$DEVELOP_TAG@${out#digest=}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attest index
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.index.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Assemble assets
+        run: |
+          sh scripts/assemble-assets.sh "$DEVELOP_TAG" dist \
+            "$RUNNER_TEMP/macos-deps-src/ersatztv-ffmpeg-$DEVELOP_TAG-macos-deps-src.tar" assets dev
+
+      - name: Attest assets
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: assets/SHA256SUMS
+
+      - name: Get develop repository token
+        id: develop-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.DEVELOP_APP_CLIENT_ID }}
+          private-key: ${{ secrets.DEVELOP_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ffmpeg-develop-builds
+
+      # no --target: ErsatzTV-ffmpeg commits don't exist in DEVELOP_REPO
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ steps.develop-token.outputs.token }}
+          INDEX_DIGEST: ${{ steps.index.outputs.digest }}
+        run: |
+          sh scripts/release-notes.sh --develop "$DEVELOP_TAG" "$LAST_RELEASE" "$INDEX_DIGEST" "$RUNNER_TEMP/toolchain" \
+            > "$RUNNER_TEMP/notes.md"
+
+          state=$(gh release view "$DEVELOP_TAG" --repo "$DEVELOP_REPO" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          case "$state" in
+            none) gh release create "$DEVELOP_TAG" --repo "$DEVELOP_REPO" --draft --title "$DEVELOP_TAG" --notes-file "$RUNNER_TEMP/notes.md" ;;
+            true) gh release edit "$DEVELOP_TAG" --repo "$DEVELOP_REPO" --notes-file "$RUNNER_TEMP/notes.md" ;;
+            *) echo "::error::$DEVELOP_TAG is already published"; exit 1 ;;
+          esac
+          gh release upload "$DEVELOP_TAG" --repo "$DEVELOP_REPO" assets/* --clobber
+
+          verify="$RUNNER_TEMP/verify"
+          gh release download "$DEVELOP_TAG" --repo "$DEVELOP_REPO" --dir "$verify"
+          diff <(cd assets && printf '%s\n' *) <(cd "$verify" && printf '%s\n' *) ||
+            { echo "::error::draft assets differ from the assembled set"; exit 1; }
+          (cd "$verify" && sha256sum -c SHA256SUMS)
+
+          gh release edit "$DEVELOP_TAG" --repo "$DEVELOP_REPO" --draft=false --latest
+
+      - name: Prune old develop releases
+        env:
+          GH_TOKEN: ${{ steps.develop-token.outputs.token }}
+        run: sh scripts/prune-develop.sh releases "$DEVELOP_REPO" "$DEVELOP_KEEP"
+
+      - name: Prune old develop images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: sh scripts/prune-develop.sh images "$IMAGE_NAME" "$DEVELOP_KEEP"

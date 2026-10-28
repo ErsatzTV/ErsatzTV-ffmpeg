@@ -184,23 +184,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      # A tag left by a partial publication is reused only if it holds exactly
-      # these platform images; the fixed tag is never moved.
       - name: Create fixed tag
         id: index
         run: |
-          set --
-          for f in "$RUNNER_TEMP"/digests/*; do set -- "$@" "$IMAGE_NAME@sha256:${f##*/}"; done
-          [ $# -eq 2 ] || { echo "::error::expected 2 platform digests, got $#"; exit 1; }
-          want=$(printf '%s\n' "$@" | sed 's/.*@//' | sort)
-          if ! docker buildx imagetools inspect "$IMAGE_NAME:$RELEASE_TAG" >/dev/null 2>&1; then
-            docker buildx imagetools create -t "$IMAGE_NAME:$RELEASE_TAG" "$@"
-          fi
-          have=$(docker buildx imagetools inspect --raw "$IMAGE_NAME:$RELEASE_TAG" | jq -r '.manifests[].digest' | sort)
-          [ "$have" = "$want" ] || { echo "::error::$IMAGE_NAME:$RELEASE_TAG holds other images:"; echo "$have"; exit 1; }
-          digest=$(docker buildx imagetools inspect "$IMAGE_NAME:$RELEASE_TAG" --format '{{json .Manifest}}' | jq -er .digest)
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "### \`$IMAGE_NAME:$RELEASE_TAG@$digest\`" >> "$GITHUB_STEP_SUMMARY"
+          out=$(sh scripts/docker-index.sh "$IMAGE_NAME" "$RELEASE_TAG" "$RUNNER_TEMP/digests")
+          echo "$out" >> "$GITHUB_OUTPUT"
+          echo "### \`$IMAGE_NAME:$RELEASE_TAG@${out#digest=}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Attest index
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -212,29 +201,8 @@ jobs:
 
       - name: Assemble assets
         run: |
-          mkdir assets
-          for t in linux64 linuxarm64 win64 macos64 macosarm64; do
-            ext=tar.xz; [ "$t" = win64 ] && ext=zip
-            f="dist/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$t-gpl-8.1.$ext"
-            [ -f "$f" ] || { echo "::error::missing $f"; ls dist; exit 1; }
-            cp "$f" assets/
-          done
-          set -- dist/*
-          [ $# -eq 5 ] || { echo "::error::unexpected native artifacts: $*"; exit 1; }
-          cp "$RUNNER_TEMP/macos-deps-src/ersatztv-ffmpeg-$RELEASE_TAG-macos-deps-src.tar" assets/
-
-          sh scripts/check-upstream.sh "$RUNNER_TEMP/upstream"
-          cp "$RUNNER_TEMP/upstream/ffmpeg-$FFMPEG_VERSION.tar.bz2" assets/
-
-          src="ersatztv-ffmpeg-$RELEASE_TAG-src"
-          git archive --prefix="$src/" -o "$RUNNER_TEMP/src.tar" "$GITHUB_SHA"
-          git -C native/FFmpeg-Builds archive --prefix="$src/native/FFmpeg-Builds/" -o "$RUNNER_TEMP/fork.tar" HEAD
-          tar --concatenate -f "$RUNNER_TEMP/src.tar" "$RUNNER_TEMP/fork.tar"
-          xz -9 -T0 -c "$RUNNER_TEMP/src.tar" > "assets/$src.tar.xz"
-
-          (cd assets && sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS")
-          mv "$RUNNER_TEMP/SHA256SUMS" assets/
-          cat assets/SHA256SUMS
+          sh scripts/assemble-assets.sh "$RELEASE_TAG" dist \
+            "$RUNNER_TEMP/macos-deps-src/ersatztv-ffmpeg-$RELEASE_TAG-macos-deps-src.tar" assets release
 
       - name: Attest assets
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
