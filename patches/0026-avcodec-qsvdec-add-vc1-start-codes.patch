@@ -1,0 +1,120 @@
+VC-1 Advanced in ASF (WVC1) stores each frame without a start code and keeps
+the sequence header and entry point in the extradata only. qsvdec passed the
+packets as they are and never gave the runtime the extradata, so
+DecodeHeader never found a sequence header, every packet failed with
+"video_get_buffer: image parameters invalid", and nothing decoded.
+
+For VC-1 packets that don't start with a start code, put a frame start code
+in front of the frame, and the sequence header and entry point from the
+extradata in front of the first packet after init or flush and of every
+keyframe. That is the layout of a VC-1 elementary stream, which the runtime
+decodes. Packets that already start with a start code, as in Blu-ray VC-1 in
+Matroska or MPEG-TS, are unchanged.
+
+diff --git a/libavcodec/qsvdec.c b/libavcodec/qsvdec.c
+--- a/libavcodec/qsvdec.c
++++ b/libavcodec/qsvdec.c
+@@ -40,6 +40,7 @@
+ #include "libavutil/pixfmt.h"
+ #include "libavutil/time.h"
+ #include "libavutil/imgutils.h"
++#include "libavutil/intreadwrite.h"
+ #include "libavutil/film_grain_params.h"
+ #include "libavutil/mastering_display_metadata.h"
+ #include "libavutil/avassert.h"
+@@ -1143,6 +1144,11 @@
+     AVFifo *packet_fifo;
+ 
+     AVPacket buffer_pkt;
++
++    /* VC-1 sequence header and entry point, from the extradata */
++    uint8_t *vc1_header;
++    int vc1_header_size;
++    int vc1_need_header;
+ } QSVDecContext;
+ 
+ static void qsv_clear_buffers(QSVDecContext *s)
+@@ -1154,6 +1160,32 @@
+     av_packet_unref(&s->buffer_pkt);
+ }
+ 
++/* ASF stores VC-1 frames without start codes and keeps the sequence header and
++ * entry point in the extradata. The runtime only parses start-code streams, so
++ * it never finds a header; give it the layout of a VC-1 elementary stream. */
++static int qsv_vc1_add_start_codes(QSVDecContext *s, AVPacket *dst,
++                                   const AVPacket *src)
++{
++    int header = s->vc1_need_header || (src->flags & AV_PKT_FLAG_KEY);
++    int header_size = header ? s->vc1_header_size : 0;
++    int ret;
++
++    ret = av_new_packet(dst, header_size + 4 + src->size);
++    if (ret < 0)
++        return ret;
++    ret = av_packet_copy_props(dst, src);
++    if (ret < 0) {
++        av_packet_unref(dst);
++        return ret;
++    }
++
++    memcpy(dst->data, s->vc1_header, header_size);
++    AV_WB32(dst->data + header_size, 0x10D);
++    memcpy(dst->data + header_size + 4, src->data, src->size);
++    s->vc1_need_header = 0;
++    return 0;
++}
++
+ static av_cold int qsv_decode_close(AVCodecContext *avctx)
+ {
+     QSVDecContext *s = avctx->priv_data;
+@@ -1163,6 +1195,7 @@
+     qsv_clear_buffers(s);
+ 
+     av_fifo_freep2(&s->packet_fifo);
++    av_freep(&s->vc1_header);
+ 
+     return 0;
+ }
+@@ -1211,6 +1244,22 @@
+     if (!avctx->pkt_timebase.num)
+         av_log(avctx, AV_LOG_WARNING, "Invalid pkt_timebase, passing timestamps as-is.\n");
+ 
++    if (avctx->codec_id == AV_CODEC_ID_VC1) {
++        /* ASF and VFW extradata start with a struct, not a start code */
++        for (int i = 0; i + 4 <= avctx->extradata_size; i++) {
++            if (AV_RB32(avctx->extradata + i) == 0x10F) {
++                s->vc1_header_size = avctx->extradata_size - i;
++                s->vc1_header = av_memdup(avctx->extradata + i, s->vc1_header_size);
++                if (!s->vc1_header) {
++                    ret = AVERROR(ENOMEM);
++                    goto fail;
++                }
++                break;
++            }
++        }
++        s->vc1_need_header = 1;
++    }
++
+     return 0;
+ fail:
+     qsv_decode_close(avctx);
+@@ -1227,7 +1276,10 @@
+     if (avpkt->size) {
+         AVPacket input_ref;
+ 
+-        ret = av_packet_ref(&input_ref, avpkt);
++        if (s->vc1_header && (avpkt->size < 3 || AV_RB24(avpkt->data) != 1))
++            ret = qsv_vc1_add_start_codes(s, &input_ref, avpkt);
++        else
++            ret = av_packet_ref(&input_ref, avpkt);
+         if (ret < 0)
+             return ret;
+         av_fifo_write(s->packet_fifo, &input_ref, 1);
+@@ -1276,6 +1328,7 @@
+     s->qsv.orig_pix_fmt = AV_PIX_FMT_NONE;
+     s->qsv.initialized = 0;
+     s->qsv.recovered = 0;
++    s->vc1_need_header = 1;
+ }
+ 
+ #define OFFSET(x) offsetof(QSVDecContext, x)
