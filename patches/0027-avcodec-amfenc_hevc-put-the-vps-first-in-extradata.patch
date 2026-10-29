@@ -1,0 +1,98 @@
+Some AMF runtimes return the HEVC encoder's extradata with the parameter
+sets in the order SPS, PPS, VPS. Readers that parse extradata in order need
+the VPS before the SPS that refers to it: cbs_h265 fails with "VPS id 0 not
+available", so hevc_metadata and the other cbs bitstream filters fail to
+initialise on hevc_amf output.
+
+Rewrite Annex B extradata as VPS, SPS, PPS, then any other units, keeping
+each unit's bytes and their relative order. Extradata that is already in
+that order, or is not Annex B, is unchanged.
+
+diff --git a/libavcodec/amfenc_hevc.c b/libavcodec/amfenc_hevc.c
+--- a/libavcodec/amfenc_hevc.c
++++ b/libavcodec/amfenc_hevc.c
+@@ -17,10 +17,12 @@
+  */
+ 
+ #include "libavutil/internal.h"
++#include "libavutil/intreadwrite.h"
+ #include "libavutil/mem.h"
+ #include "libavutil/opt.h"
+ #include "amfenc.h"
+ #include "codec_internal.h"
++#include "hevc/hevc.h"
+ #include <AMF/components/PreAnalysis.h>
+ 
+ #define OFFSET(x) offsetof(AMFEncoderContext, x)
+@@ -159,6 +161,62 @@ static const AVOption options[] = {
+     { NULL }
+ };
+ 
++static int amf_hevc_ps_rank(int nal_type)
++{
++    switch (nal_type) {
++    case HEVC_NAL_VPS: return 0;
++    case HEVC_NAL_SPS: return 1;
++    case HEVC_NAL_PPS: return 2;
++    default:           return 3;
++    }
++}
++
++/*
++ * Some AMF runtimes return the parameter sets as SPS, PPS, VPS. Readers that
++ * parse extradata in order, such as cbs_h265 and so hevc_metadata, need the
++ * VPS before the SPS that refers to it. Rewrite the units as VPS, SPS, PPS,
++ * then anything else, each in its original order.
++ */
++static int amf_hevc_reorder_extradata(AVCodecContext *avctx)
++{
++    const uint8_t *src = avctx->extradata;
++    int size = avctx->extradata_size;
++    int starts[17], ranks[16], nb_units = 0;
++    uint8_t *dst;
++    int pos = 0;
++
++    if (size < 4 || (AV_RB24(src) != 1 && AV_RB32(src) != 1))
++        return 0;
++
++    for (int i = 0; i + 3 < size; i++) {
++        if (src[i] || src[i + 1] || src[i + 2] != 1)
++            continue;
++        if (nb_units == FF_ARRAY_ELEMS(ranks))
++            return 0;
++        starts[nb_units] = i > 0 && !src[i - 1] ? i - 1 : i;
++        ranks[nb_units++] = amf_hevc_ps_rank((src[i + 3] >> 1) & 0x3f);
++        i += 3;
++    }
++    starts[nb_units] = size;
++
++    dst = av_mallocz(size + AV_INPUT_BUFFER_PADDING_SIZE);
++    if (!dst)
++        return AVERROR(ENOMEM);
++
++    for (int r = 0; r <= 3; r++) {
++        for (int u = 0; u < nb_units; u++) {
++            if (ranks[u] != r)
++                continue;
++            memcpy(dst + pos, src + starts[u], starts[u + 1] - starts[u]);
++            pos += starts[u + 1] - starts[u];
++        }
++    }
++
++    av_free(avctx->extradata);
++    avctx->extradata = dst;
++    return 0;
++}
++
+ static av_cold int amf_encode_init_hevc(AVCodecContext *avctx)
+ {
+     int                 ret = 0;
+@@ -535,7 +593,7 @@ static av_cold int amf_encode_init_hevc(AVCodecContext *avctx)
+     buffer->pVtbl->Release(buffer);
+     var.pInterface->pVtbl->Release(var.pInterface);
+ 
+-    return 0;
++    return amf_hevc_reorder_extradata(avctx);
+ }
+ static const FFCodecDefault defaults[] = {
+     { "refs",       "-1"  },
