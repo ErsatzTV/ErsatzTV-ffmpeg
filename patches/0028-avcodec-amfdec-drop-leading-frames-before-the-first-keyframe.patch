@@ -1,0 +1,268 @@
+When a stream starts on an open GOP (an H.264 recovery point, an HEVC CRA or
+an MPEG-2 I-frame without closed_gop), the leading pictures reference a GOP
+that was cut off. h264dec, hevcdec and mpeg12dec drop them. The AMF runtime
+outputs them as concealed pictures and doesn't mark them, so the picture
+started on garbage and late by as many frames.
+
+Classify each packet from its headers before submission and carry that to
+the decoded surface as buffer properties, as amfdec already does for dts. A
+picture is a droppable leading picture if it is an HEVC RASL picture, an
+MPEG-2 B-picture after an open GOP header, or an H.264 non-IDR picture when
+the first keyframe has a recovery point SEI with recovery_frame_cnt 0 or,
+with no recovery point SEI, contains only reference I-slices. A recovery
+point with a nonzero count is not overridden. HEVC RADL pictures, closed or
+unknown MPEG-2 GOPs and streams starting on an H.264 IDR are left alone.
+Keyframes are tagged too, so the MPEG-2 keyframe isn't mistaken for a
+leading B-picture with the same pts.
+
+Until the first frame comes out after init or flush, drop droppable leading
+pictures that display at or before the first keyframe, unless output_corrupt
+or showall is set. Stop once any frame has been output: a stream that starts
+before its first keyframe would otherwise lose the frames just before it and
+keep the ones before those.
+
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -78,7 +78,7 @@
+ OBJS-$(CONFIG_AANDCTTABLES)            += aandcttab.o
+ OBJS-$(CONFIG_AC3DSP)                  += ac3dsp.o ac3.o ac3tab.o
+ OBJS-$(CONFIG_ADTS_HEADER)             += adts_header.o mpeg4audio_sample_rates.o
+-OBJS-$(CONFIG_AMF)                     += amfenc.o amfdec.o
++OBJS-$(CONFIG_AMF)                     += amfenc.o amfdec.o h2645_parse.o
+ OBJS-$(CONFIG_AUDIO_FRAME_QUEUE)       += audio_frame_queue.o
+ OBJS-$(CONFIG_ATSC_A53)                += atsc_a53.o
+ OBJS-$(CONFIG_AUDIODSP)                += audiodsp.o
+diff --git a/libavcodec/amfdec.c b/libavcodec/amfdec.c
+--- a/libavcodec/amfdec.c
++++ b/libavcodec/amfdec.c
+@@ -25,6 +25,12 @@
+ #include "libavutil/mem.h"
+ #include "libavutil/time.h"
+ #include "decode.h"
++#include "h264.h"
++#include "golomb.h"
++#include "hevc/hevc.h"
++#include "mpeg12.h"
++#include "startcode.h"
++#include "sei.h"
+ #include "decode_bsf.h"
+ #include "libavutil/mastering_display_metadata.h"
+
+@@ -88,6 +94,9 @@
+
+     ctx->drain = 0;
+     ctx->resolution_changed = 0;
++    ctx->first_key_pts = AV_NOPTS_VALUE;
++    ctx->closed_gop = -1;
++    ctx->recovered = 0;
+
+     switch (avctx->codec->id) {
+         case AV_CODEC_ID_H264:
+@@ -260,6 +269,7 @@
+
+     av_buffer_unref(&ctx->device_ctx_ref);
+     av_packet_free(&ctx->in_pkt);
++    ff_h2645_packet_uninit(&ctx->leading_pkt);
+
+     return 0;
+ }
+@@ -510,6 +520,7 @@
+     AMFSurface          *surface = NULL;
+     AMFData             *data_out = NULL;
+
++retry:
+     ret = ctx->decoder->pVtbl->QueryOutput(ctx->decoder, &data_out);
+     if (ret != AMF_OK && ret != AMF_REPEAT) {
+         return ret;
+@@ -527,6 +538,27 @@
+
+     ret = amf_amfsurface_to_avframe(avctx, surface, frame);
+     AMF_GOTO_FAIL_IF_FALSE(avctx, ret >= 0, AMF_FAIL, "Failed to convert AMFSurface to AVFrame = %d\n", ret);
++
++    /* Timestamps alone cannot identify undecodable leading pictures:
++     * RADL pictures and closed-GOP B-pictures may precede the keyframe.
++     * Only discard surfaces positively identified by their packet headers. */
++    if (!ctx->recovered) {
++        AMFVariantStruct key = { 0 }, leading = { 0 };
++        int is_key = surface->pVtbl->GetProperty(surface, L"FFMPEG:key", &key) == AMF_OK &&
++                     key.int64Value;
++        int discardable = surface->pVtbl->GetProperty(surface, L"FFMPEG:leading", &leading) == AMF_OK &&
++                          leading.int64Value;
++        if (!is_key && discardable && ctx->first_key_pts != AV_NOPTS_VALUE &&
++            frame->pts != AV_NOPTS_VALUE && frame->pts <= ctx->first_key_pts &&
++            !(avctx->flags & AV_CODEC_FLAG_OUTPUT_CORRUPT) &&
++            !(avctx->flags2 & AV_CODEC_FLAG2_SHOW_ALL)) {
++            av_log(avctx, AV_LOG_DEBUG, "Dropping leading frame, pts %"PRId64"\n", frame->pts);
++            av_frame_unref(frame);
++            surface = NULL;
++            goto retry;
++        }
++        ctx->recovered = 1;
++    }
+     return AMF_OK;
+ fail:
+
+@@ -537,8 +569,112 @@
+     return ret;
+ }
+
++/* A conservative startup classifier. Unknown headers are never grounds for
++ * discarding a picture. H.264 accepts an immediate recovery point, or a
++ * key-flagged reference I-picture when no recovery SEI is present. An explicit
++ * delayed recovery point must not take that fallback. IDR pictures recover in
++ * decode order, including pictures which precede them in display order. */
++static int amf_leading_picture(AVCodecContext *avctx, const AVPacket *pkt,
++                              int *recovery_point)
++{
++    AMFDecoderContext *ctx = avctx->priv_data;
++    int i, flags = 0, length_size = 0, leading = 0;
++    int recovery_sei = 0, all_intra = 1;
++
++    *recovery_point = 0;
++    if (avctx->codec_id == AV_CODEC_ID_MPEG2VIDEO) {
++        const uint8_t *p = pkt->data, *end = p + pkt->size;
++        uint32_t state = -1;
++        while (p < end) {
++            p = avpriv_find_start_code(p, end, &state);
++            if (state == GOP_START_CODE && end - p >= 4)
++                ctx->closed_gop = !!(p[3] & 0x40);
++            if (state == PICTURE_START_CODE && end - p >= 2)
++                return ctx->closed_gop == 0 && ((p[1] >> 3) & 7) == AV_PICTURE_TYPE_B;
++        }
++        return 0;
++    }
++    if (avctx->codec_id != AV_CODEC_ID_H264 && avctx->codec_id != AV_CODEC_ID_HEVC)
++        return 0;
++
++    /* h264_mp4toannexb supplies Annex B. HEVC is also accepted in hvcC form. */
++    if (avctx->codec_id == AV_CODEC_ID_HEVC && avctx->extradata_size >= 23 &&
++        avctx->extradata[0] == 1) {
++        flags = H2645_FLAG_IS_NALFF;
++        length_size = (avctx->extradata[21] & 3) + 1;
++    }
++    if (ff_h2645_packet_split(&ctx->leading_pkt, pkt->data, pkt->size, avctx,
++                             length_size, avctx->codec_id, flags) < 0)
++        return 0;
++
++    for (i = 0; i < ctx->leading_pkt.nb_nals; i++) {
++        const H2645NAL *nal = &ctx->leading_pkt.nals[i];
++        if (avctx->codec_id == AV_CODEC_ID_HEVC) {
++            if (nal->type <= HEVC_NAL_RSV_VCL31)
++                return nal->type == HEVC_NAL_RASL_N || nal->type == HEVC_NAL_RASL_R;
++        } else {
++            if (nal->type == H264_NAL_IDR_SLICE) {
++                /* Do not start timestamp-based recovery at a later keyframe. */
++                ctx->recovered = 1;
++                return 0;
++            }
++            if (nal->type == H264_NAL_SLICE) {
++                GetBitContext gb = nal->gb;
++                unsigned slice_type;
++
++                leading = 1;
++                get_ue_golomb_long(&gb); // first_mb_in_slice
++                slice_type = get_ue_golomb_long(&gb);
++                all_intra &= get_bits_left(&gb) > 0 && nal->ref_idc &&
++                             (slice_type == 2 || slice_type == 7);
++            }
++            if (nal->type == H264_NAL_SEI) {
++                const uint8_t *p = nal->data + 1, *end = nal->data + nal->size;
++                while (end - p >= 2) {
++                    unsigned type = 0, size = 0;
++                    while (p < end && *p == 255) {
++                        type += 255;
++                        p++;
++                    }
++                    if (p == end) {
++                        recovery_sei = 1; // malformed SEI: do not infer recovery
++                        break;
++                    }
++                    type += *p++;
++                    while (p < end && *p == 255) {
++                        size += 255;
++                        p++;
++                    }
++                    if (p == end) {
++                        recovery_sei = 1; // malformed SEI: do not infer recovery
++                        break;
++                    }
++                    size += *p++;
++                    if (size > end - p) {
++                        recovery_sei = 1;
++                        break;
++                    }
++                    /* recovery_frame_cnt is ue(v); a leading 1 means zero. */
++                    if (type == SEI_TYPE_RECOVERY_POINT) {
++                        recovery_sei = 1;
++                        *recovery_point = size > 0 && (p[0] & 0x80);
++                    }
++                    p += size;
++                }
++            }
++        }
++    }
++    /* Some containers retain a random-access key flag after recovery SEI
++     * has been stripped. Confirm intra reference slices before using it. */
++    if (avctx->codec_id == AV_CODEC_ID_H264 && !recovery_sei &&
++        leading && all_intra && (pkt->flags & AV_PKT_FLAG_KEY))
++        *recovery_point = 1;
++    return leading;
++}
++
+ static AMF_RESULT amf_update_buffer_properties(AVCodecContext *avctx, AMFBuffer* buffer, const AVPacket* pkt)
+ {
++    AMFDecoderContext *ctx = avctx->priv_data;
+     AMF_RESULT          res;
+
+     AMF_RETURN_IF_FALSE(avctx, buffer != NULL, AMF_INVALID_ARG, "update_buffer_properties() - buffer not passed in");
+@@ -548,6 +684,17 @@
+     AMF_ASSIGN_PROPERTY_INT64(res, buffer, L"FFMPEG:dts", pkt->dts);
+     if (res != AMF_OK)
+         av_log(avctx, AV_LOG_VERBOSE, "Failed to assign dts value.");
++    if (!ctx->recovered) {
++        int recovery_point;
++        int leading = amf_leading_picture(avctx, pkt, &recovery_point);
++        AMF_ASSIGN_PROPERTY_INT64(res, buffer, L"FFMPEG:leading", leading);
++        if (pkt->flags & AV_PKT_FLAG_KEY) {
++            if (ctx->first_key_pts == AV_NOPTS_VALUE &&
++                (avctx->codec_id != AV_CODEC_ID_H264 || recovery_point))
++                ctx->first_key_pts = pkt->pts;
++            AMF_ASSIGN_PROPERTY_INT64(res, buffer, L"FFMPEG:key", 1);
++        }
++    }
+     return AMF_OK;
+ }
+
+@@ -686,6 +833,9 @@
+ {
+     AMFDecoderContext *ctx = avctx->priv_data;
+     ctx->decoder->pVtbl->Flush(ctx->decoder);
++    ctx->first_key_pts = AV_NOPTS_VALUE;
++    ctx->closed_gop = -1;
++    ctx->recovered = 0;
+ }
+
+ #define OFFSET(x) offsetof(AMFDecoderContext, x)
+diff --git a/libavcodec/amfdec.h b/libavcodec/amfdec.h
+--- a/libavcodec/amfdec.h
++++ b/libavcodec/amfdec.h
+@@ -28,6 +28,7 @@
+ #include <AMF/components/VideoDecoderUVD.h>
+
+ #include "avcodec.h"
++#include "h2645_parse.h"
+ #include "libavformat/avformat.h"
+ #include "libavutil/fifo.h"
+ #include "libavutil/frame.h"
+@@ -55,6 +56,10 @@
+     int                 drain;
+     int                 resolution_changed;
+     int                 copy_output;
++    int64_t             first_key_pts;
++    int                 recovered;
++    int                 closed_gop;
++    H2645Packet         leading_pkt;
+     AVPacket*           in_pkt;
+     enum AMF_SURFACE_FORMAT output_format;
+
