@@ -22,7 +22,8 @@ notes:
   - >-
     Two hunks were resolved by hand against n8.1.2 + 0001-0017. configure:
     the mjpeg/mpeg1/mpeg2 *_rkmpp_* deps lines, whose context moved because of
-    0011's mpeg2_amf_decoder_deps. libavutil/hwcontext.h:
+    0011's mpeg2_amf_decoder_deps (the mpeg4_rkmpp hunk's trailing context is
+    vc1_cuvid_decoder_deps since 0011 dropped vc1_amf). libavutil/hwcontext.h:
     AV_HWDEVICE_TYPE_RKMPP goes after AV_HWDEVICE_TYPE_OHCODEC, because the
     AV_HWDEVICE_TYPE_NB context comes from jellyfin's 0011 (QSV derived
     devices), which is not carried. 0042 never uses _NB.

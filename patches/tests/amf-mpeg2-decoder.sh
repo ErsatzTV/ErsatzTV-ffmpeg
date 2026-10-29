@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 #
 # Reproducer for
-#   0011-lavc-amfdec-add-mpeg2_amf-and-vc1_amf-decoders.patch
+#   0011-lavc-amfdec-add-mpeg2_amf-decoder.patch
 #
-# Needs an AMD GPU whose AMF runtime has the MPEG-2 (and, for the optional vc1
-# case, VC-1) decoder component. On a Windows laptop with an APU and a discrete
-# card the runtime picks the APU by default, and current APUs have no MPEG-2
-# hardware, so point the run at the discrete adapter with INIT_HW_DEVICE (see
-# usage). ErsatzTV next's `probe_capabilities amf --adapter N` shows which
-# adapter reports MPEG2/VC1.
+# Needs an AMD GPU whose AMF runtime has the MPEG-2 decoder component. On a
+# Windows laptop with an APU and a discrete card the runtime picks the APU by
+# default, and current APUs have no MPEG-2 hardware, so point the run at the
+# discrete adapter with INIT_HW_DEVICE (see usage). ErsatzTV next's
+# `probe_capabilities amf --adapter N` shows which adapter reports MPEG2.
 #
 # Cases:
 #
-#   decoder-listed     `ffmpeg -decoders` contains mpeg2_amf and vc1_amf.
+#   decoder-listed     `ffmpeg -decoders` contains mpeg2_amf and not vc1_amf.
 #                      Fails on any build without the patch, regardless of GPU.
+#                      vc1_amf must stay out: -hwaccel amf swaps in any
+#                      <codec>_amf wrapper, and VC-1 from MKV comes out of the
+#                      AMF runtime with decode-order pts (see the manifest).
 #
 #   mpeg2-progressive  Synthetic 1080p MPEG-2 TS, decoded with -hwaccel amf and
 #                      kept on the device through vpp_amf into h264_amf. Passes
@@ -27,17 +29,6 @@
 #                      NOT kept on the device: AMF stamps interlaced surfaces as
 #                      field pairs and h264_amf then stalls, the same issue
 #                      ErsatzTV works around for interlaced H.264. Same checks.
-#
-#   vc1                Only when VC1_SAMPLE is set (ffmpeg cannot encode VC-1).
-#                      Advanced Profile stream expected. Same checks as
-#                      mpeg2-progressive with vc1_amf, plus a timestamp check on
-#                      the first 10 s: output pts must be monotonic. KNOWN TO
-#                      FAIL on VC-1 in MKV as of the g6a8e4827 build: the runtime
-#                      stamps each picture with its own packet's pts and MKV
-#                      carries VC-1 timestamps in decode order, so pts swap in
-#                      pairs and a cfr encode dups/drops a third of the frames.
-#                      The pictures themselves are correct. ErsatzTV does not
-#                      use vc1_amf until this is solved; see the manifest.
 #
 #   unsupported-gpu    Only when UNSUPPORTED_INIT_HW_DEVICE names an AMD adapter
 #                      WITHOUT MPEG-2 hardware (an APU such as the Radeon 680M).
@@ -53,7 +44,6 @@
 #        FFMPEG=/path/to/ffmpeg amf-mpeg2-decoder.sh
 #        CASES="decoder-listed mpeg2-progressive" amf-mpeg2-decoder.sh
 #        INIT_HW_DEVICE="-init_hw_device d3d11va=dx:1 -init_hw_device amf=hw@dx" amf-mpeg2-decoder.sh
-#        VC1_SAMPLE=/path/to/vc1.mkv amf-mpeg2-decoder.sh
 #        UNSUPPORTED_INIT_HW_DEVICE="-init_hw_device d3d11va=dx:0 -init_hw_device amf=hw@dx" amf-mpeg2-decoder.sh
 #
 # Exit: 0 all runnable cases passed, 1 any case failed, 77 nothing was runnable.
@@ -61,9 +51,8 @@
 set -uo pipefail
 
 FFMPEG="${1:-${FFMPEG:-ffmpeg}}"
-CASES="${CASES:-decoder-listed mpeg2-progressive mpeg2-interlaced vc1 unsupported-gpu}"
+CASES="${CASES:-decoder-listed mpeg2-progressive mpeg2-interlaced unsupported-gpu}"
 INIT_HW_DEVICE="${INIT_HW_DEVICE:--init_hw_device amf=hw}"
-VC1_SAMPLE="${VC1_SAMPLE:-}"
 UNSUPPORTED_INIT_HW_DEVICE="${UNSUPPORTED_INIT_HW_DEVICE:-}"
 TIMEOUT_S="${TIMEOUT_S:-60}"
 
@@ -157,10 +146,10 @@ for c in $CASES; do
                     have="$have $d"
                 fi
             done
-            if [ "$have" = " mpeg2_amf vc1_amf" ]; then
-                report "$c" 1 "mpeg2_amf and vc1_amf present"
+            if [ "$have" = " mpeg2_amf" ]; then
+                report "$c" 1 "mpeg2_amf present, vc1_amf absent"
             else
-                report "$c" 0 "present:${have:- none} (patch not applied?)"
+                report "$c" 0 "present:${have:- none} (expected mpeg2_amf only)"
             fi
             ;;
         mpeg2-progressive)
@@ -177,30 +166,6 @@ for c in $CASES; do
                 run_decode "$c" "$src" mpeg2_amf "hwdownload,format=nv12,bwdif=mode=send_frame,hwupload,vpp_amf=w=1280:h=720:format=nv12,setsar=1"
             else
                 report "$c" 0 "could not encode the synthetic source"
-            fi
-            ;;
-        vc1)
-            if [ -z "$VC1_SAMPLE" ]; then
-                echo "SKIP  vc1  set VC1_SAMPLE to an Advanced Profile VC-1 file to run this case"
-                continue
-            fi
-            if [ ! -f "$VC1_SAMPLE" ]; then
-                report "$c" 0 "VC1_SAMPLE not found: $VC1_SAMPLE"
-                continue
-            fi
-            run_decode "$c" "$VC1_SAMPLE" vc1_amf "vpp_amf=w=1280:h=720:format=nv12,setsar=1" any
-            # decode order vs display order: pts out of the wrapper must not go backwards
-            ptslog="$WORK/$c.pts"
-            # shellcheck disable=SC2086
-            "${BOUND[@]}" "$FFMPEG" -hide_banner -v info \
-                $INIT_HW_DEVICE -hwaccel amf -hwaccel_output_format amf \
-                -t 10 -i "$VC1_SAMPLE" -an -sn -vf "hwdownload,format=nv12,showinfo" -f null - 2>&1 \
-                | sed -n 's/.*n: *[0-9]* pts: *\([0-9]*\) pts_time.*/\1/p' >"$ptslog"
-            backwards="$(awk 'NR>1 && $1<=p {c++} {p=$1} END {print c+0}' "$ptslog")"
-            if [ -s "$ptslog" ] && [ "$backwards" -eq 0 ]; then
-                report "$c-timestamps" 1 "$(wc -l <"$ptslog") frames, pts monotonic"
-            else
-                report "$c-timestamps" 0 "$backwards backwards pts steps in $(wc -l <"$ptslog") frames (head: $(head -6 "$ptslog" | tr '\n' ' '))"
             fi
             ;;
         unsupported-gpu)

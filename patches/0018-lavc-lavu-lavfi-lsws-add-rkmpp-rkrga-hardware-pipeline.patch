@@ -1,5 +1,5 @@
 diff --git a/configure b/configure
-index 7d71b88..aeb2510 100755
+index a0a80e7..1891f77 100755
 --- a/configure
 +++ b/configure
 @@ -367,6 +367,7 @@ External library support:
@@ -89,8 +89,8 @@ index 7d71b88..aeb2510 100755
 +mpeg4_rkmpp_decoder_select="mpeg4_unpack_bframes_bsf dump_extradata_bsf"
  mpeg4_v4l2m2m_decoder_deps="v4l2_m2m mpeg4_v4l2_m2m"
  mpeg4_v4l2m2m_encoder_deps="v4l2_m2m mpeg4_v4l2_m2m"
- vc1_amf_decoder_deps="amf"
-@@ -4177,6 +4188,7 @@ libopencolorio_filter_deps="libopencolorio"
+ vc1_cuvid_decoder_deps="cuvid"
+@@ -4176,6 +4187,7 @@ libopencolorio_filter_deps="libopencolorio"
  overlay_opencl_filter_deps="opencl"
  overlay_qsv_filter_deps="libmfx"
  overlay_qsv_filter_select="qsvvpp"
@@ -98,7 +98,7 @@ index 7d71b88..aeb2510 100755
  overlay_vaapi_filter_deps="vaapi VAProcPipelineCaps_blend_flags"
  overlay_vulkan_filter_deps="vulkan spirv_library"
  owdenoise_filter_deps="gpl"
-@@ -4201,6 +4213,7 @@ sr_amf_filter_deps="amf"
+@@ -4200,6 +4212,7 @@ sr_amf_filter_deps="amf"
  vpp_amf_filter_deps="amf"
  scale_qsv_filter_deps="libmfx"
  scale_qsv_filter_select="qsvvpp"
@@ -106,7 +106,7 @@ index 7d71b88..aeb2510 100755
  scdet_filter_select="scene_sad"
  scdet_vulkan_filter_deps="vulkan spirv_library"
  select_filter_select="scene_sad"
-@@ -4245,6 +4258,7 @@ scale_vt_filter_deps="videotoolbox VTPixelTransferSessionCreate"
+@@ -4244,6 +4257,7 @@ scale_vt_filter_deps="videotoolbox VTPixelTransferSessionCreate"
  scale_vulkan_filter_deps="vulkan spirv_compiler spirv_library"
  vpp_qsv_filter_deps="libmfx"
  vpp_qsv_filter_select="qsvvpp"
@@ -114,7 +114,7 @@ index 7d71b88..aeb2510 100755
  xfade_opencl_filter_deps="opencl"
  xfade_vulkan_filter_deps="vulkan spirv_library"
  yadif_cuda_filter_deps="ffnvcodec"
-@@ -4295,14 +4309,14 @@ cws2fws_extralibs="zlib_extralibs"
+@@ -4294,14 +4308,14 @@ cws2fws_extralibs="zlib_extralibs"
  
  # libraries, in any order
  avcodec_deps="avutil"
@@ -131,7 +131,7 @@ index 7d71b88..aeb2510 100755
  swresample_deps="avutil"
  swresample_suggest="libm libsoxr stdatomic"
  swscale_deps="avutil"
-@@ -7499,10 +7513,15 @@ enabled openssl           && { { check_pkg_config openssl "openssl >= 3.0.0" ope
+@@ -7498,10 +7512,15 @@ enabled openssl           && { { check_pkg_config openssl "openssl >= 3.0.0" ope
                                 check_lib openssl openssl/ssl.h DTLS_get_data_mtu -lssl -lcrypto -lws2_32 -lgdi32 ||
                                 die "ERROR: openssl (>= 1.1.1) not found"; }
  enabled pocketsphinx      && require_pkg_config pocketsphinx pocketsphinx pocketsphinx/pocketsphinx.h ps_init
@@ -148,7 +148,7 @@ index 7d71b88..aeb2510 100755
  enabled vapoursynth       && require_headers "vapoursynth/VSScript4.h vapoursynth/VapourSynth4.h"
  
  if enabled gcrypt; then
-@@ -7702,7 +7721,7 @@ fi
+@@ -7701,7 +7720,7 @@ fi
  if enabled_all opencl libdrm ; then
      check_type "CL/cl_intel.h" "clCreateImageFromFdINTEL_fn" &&
          enable opencl_drm_beignet
