@@ -44,7 +44,8 @@ last_verified:
   date: 2026-10-29
   builds:
     without_patch: n8.1.2-etv.dev.3f568f4c     # CI build of #88; same patches as main 72661f6
-    with_patch: n8.1.2-etv.dev.0027e5d0        # local win64 build of this patch on main 72661f6
+    with_patch: n8.1.2-etv.dev.d19aedbd        # CI build of this PR (win64)
+    local: n8.1.2-etv.dev.0027e5d0             # local win64 build of the same patch on main 72661f6
   how: >-
     tests/amfenc-hevc-extradata-order.sh on Windows 11 through d3d11va, on the
     RX 6600M (Navi 23, 1002:73ff) and the Radeon 680M (Rembrandt, 1002:1681),
@@ -53,5 +54,9 @@ last_verified:
     all three on both (32 33 34). Radeon Pro WX 3200 (Polaris 12, 1002:6981),
     driver 31.0.21924.61: both builds pass order_8bit and metadata, order_10bit
     skips (the driver refuses 10-bit encode), and the 90 bytes of extradata
-    are identical with and without the patch.
+    are identical with and without the patch. The reproducer ran on the local
+    build. ErsatzTV next amf fixtures with the CI builds (unpatched on main
+    01f260d, patched on main 17929ab, which only drops the unused VC-1 decode
+    capability): RX 6600M 454 -> 542 of 561, every hevc_metadata failure
+    fixed; WX 3200 561 of 561 with both builds.
 remove_when: "Upstream hevc_amf puts the VPS first in its extradata, or cbs_h265 accepts parameter sets in any order in extradata"
