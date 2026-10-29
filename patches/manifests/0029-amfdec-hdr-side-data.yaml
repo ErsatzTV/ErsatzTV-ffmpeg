@@ -1,0 +1,81 @@
+id: amfdec-hdr-side-data
+patch: 0029-avcodec-amfdec-fix-duplicate-hdr-side-data.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. In origin/master (2026-10-29) the code moved to
+  # av_amf_attach_hdr_metadata() in hwcontext_amf.c (bccaf86a89, in n9.0),
+  # which still uses av_*_create_side_data() and still sets min_luminance
+  # from maxMasteringLuminance.
+  commits: []
+dependencies:
+  - amfdec-leading-frames     # touches amfdec.c after 0028; applies with offsets only
+platforms:
+  - windows-amf
+  - linux-amf                 # same decoder code; the Linux runtime is untested
+reproducer: tests/amfdec-hdr-side-data.sh
+samples:
+  - samples/av1-640x360-hdr10-mdcv.mkv   # samples/make-av1-hdr10-mdcv.sh (shared with 0021)
+failure_without_patch:
+  - "[vf#0:0] Task finished with error code: -17 (File exists)"
+  - "Could not open encoder before EOF"
+success_with_patch:
+  - "every frame decodes, with or without a filter"
+  - "each frame carries one mastering display and one content light entry,
+     with the same values libdav1d exports"
+notes:
+  - "MECHANISM: amf_amfsurface_to_avframe() calls ff_decode_frame_props(),
+     which copies the container's mastering display and content light
+     metadata onto the frame, then for PQ surfaces adds the runtime's copy with
+     av_*_create_side_data(). Two entries of a non-multi type make
+     av_frame_side_data_clone() return EEXIST when fftools copies the frame's
+     global side data (ffmpeg_filter.c), so any HDR10 source with container
+     metadata fails, filter or not. Same bug as 0021 for av1_qsv."
+  - "The patch exports through ff_decode_mastering_display_new() and
+     ff_decode_content_light_new(): the runtime's copy replaces the
+     container's unless the caller sets side_data_prefer_packet. It also takes
+     min_luminance from minMasteringLuminance (amfdec used the max for both)
+     and releases the metadata buffer, which amf_get_property_buffer() returns
+     with a reference from QueryInterface and amfdec never released."
+  - "AV1 UNITS: once the decoder's copy replaces the container's, its values
+     matter. For AV1 the runtime returns the metadata OBU's fixed point values
+     (chromaticity 0.16, max luminance 24.8, min luminance 18.14), not the
+     50000/10000 units ColorSpace.h documents for AMFHDRMetadata, and its red,
+     green and blue slots hold blue, red and green, as if it applied HEVC's
+     G,B,R order to AV1's R,G,B. Read as documented, the sample's 1000 nit
+     peak came out as 25.6 nits and the primaries as r(0.1966,0.0786). The
+     patch uses 0021's AV1 denominators and undoes the rotation, after which
+     every value equals libdav1d's. Measured on one runtime (RX 6600M and
+     Radeon 680M, driver 32.0.21045.5002); a runtime that fixes this would
+     need the conversion gated."
+  - "HEVC keeps the documented units, which match HEVC's own SEI units. Not
+     verified: on the same runtime the HEVC HDR10 fixture (MPEG-TS, SEI only)
+     gets no HDR side data from amfdec at all."
+  - "With 0029 alone, 10-bit AV1 still fails anything that downloads or
+     processes the frames (hwdownload -22, vpp_amf), which is 0030's bug. The
+     reproducer keeps the frames on the GPU so it tests this patch alone."
+  - "Only GPUs that decode the PQ format in hardware reach this code. Found on
+     AV1 HDR10 in Matroska on an RX 6600M; Polaris has no AV1 decode and skips
+     the reproducer."
+last_verified:
+  version: n8.1.2
+  date: 2026-10-29
+  builds:
+    without_patch: n8.1.2-etv.dev.d1f3fe60     # CI build of main d1f3fe6
+    with_patch: n8.1.2-etv.dev.00300002        # local win64 build, main d1f3fe6 + 0029 + 0030
+  how: >-
+    tests/amfdec-hdr-side-data.sh on Windows 11 through d3d11va, on the
+    RX 6600M (Navi 23, 1002:73ff) and the Radeon 680M (Rembrandt, 1002:1681),
+    driver 32.0.21045.5002: the unpatched build fails decode and passthrough
+    with -17 on both GPUs; the patched build passes both, 48/48 frames, with
+    mastering display and content light values equal to libdav1d's. An
+    earlier revision without the AV1 unit conversion passed passthrough but
+    failed the value check (25.6 nit peak, rotated primaries). ErsatzTV next
+    amf fixtures on main 373d9d5: RX 6600M 543 of 561 with main CI (the 18
+    AV1 HDR cases fail with -17) and 561 of 561 with the patched build;
+    external media all pass with both. Radeon Pro WX 3200 (Polaris 12,
+    1002:6981), driver 31.0.21924.61: both reproducers skip (no AV1 decode),
+    and next's amf fixtures pass 561 of 561 with the patched build, external
+    media all pass.
+remove_when: "Upstream amfdec (or av_amf_attach_hdr_metadata) exports HDR metadata through ff_decode_*_new() and reads minMasteringLuminance"
