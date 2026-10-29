@@ -1,0 +1,62 @@
+id: amfenc-hevc-extradata-order
+patch: 0027-avcodec-amfenc_hevc-put-the-vps-first-in-extradata.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. amfenc_hevc.c in origin/master (2026-10-29) copies
+  # AMF_VIDEO_ENCODER_HEVC_EXTRADATA as it is.
+  commits: []
+dependencies: []
+platforms:
+  - windows-amf
+  - linux-amf                 # same encoder code; the Linux runtime is untested
+reproducer: tests/amfenc-hevc-extradata-order.sh
+samples: []                   # synthetic input from lavfi
+failure_without_patch:
+  - "hevc_amf extradata NAL types 33 34 32 (SPS, PPS, VPS)"
+  - "-bsf:v hevc_metadata: [hevc_metadata] VPS id 0 not available. ... Failed
+     to read extradata. Error initializing bitstream filter: hevc_metadata"
+  - "reproducer: order_8bit, order_10bit and metadata fail; exit 1"
+success_with_patch:
+  - "hevc_amf extradata NAL types 32 33 34 (VPS, SPS, PPS)"
+  - "hevc_metadata initialises, the output carries the colour tags, and software
+     decodes every frame; reproducer exits 0"
+notes:
+  - "MECHANISM: amfenc_hevc.c copies the runtime's extradata property as it is.
+     The RX 6600M and Radeon 680M runtime returns the parameter sets as SPS, PPS,
+     VPS, while the parameter sets in front of each IDR come VPS first.
+     cbs_h265 reads extradata units in order, and its SPS reader needs the VPS
+     the SPS refers to (cbs_h265_syntax_template.c), so every cbs bitstream
+     filter fails to initialise. Muxers that build hvcC (MP4, Matroska) sort
+     the arrays themselves, and MPEG-TS uses the in-band parameter sets, so a
+     plain encode is unaffected."
+  - "The patch moves whole units, start codes included, into the order VPS,
+     SPS, PPS, then anything else, keeping the relative order within each
+     group. It does not parse the units and does nothing to extradata that is
+     not Annex B or that has more than 16 units. A runtime that already returns
+     VPS first gets identical bytes back."
+  - "Polaris (Radeon Pro WX 3200) returns VPS, SPS, PPS and passes without the
+     patch. The affected and unaffected runtimes differ in both GPU generation
+     and driver branch, so which of the two decides the order is unknown."
+last_verified:
+  version: n8.1.2
+  date: 2026-10-29
+  builds:
+    without_patch: n8.1.2-etv.dev.3f568f4c     # CI build of #88; same patches as main 72661f6
+    with_patch: n8.1.2-etv.dev.d19aedbd        # CI build of this PR (win64)
+    local: n8.1.2-etv.dev.0027e5d0             # local win64 build of the same patch on main 72661f6
+  how: >-
+    tests/amfenc-hevc-extradata-order.sh on Windows 11 through d3d11va, on the
+    RX 6600M (Navi 23, 1002:73ff) and the Radeon 680M (Rembrandt, 1002:1681),
+    driver 32.0.21045.5002: the unpatched build fails order_8bit, order_10bit
+    and metadata on both GPUs (extradata 33 34 32); the patched build passes
+    all three on both (32 33 34). Radeon Pro WX 3200 (Polaris 12, 1002:6981),
+    driver 31.0.21924.61: both builds pass order_8bit and metadata, order_10bit
+    skips (the driver refuses 10-bit encode), and the 90 bytes of extradata
+    are identical with and without the patch. The reproducer ran on the local
+    build. ErsatzTV next amf fixtures with the CI builds (unpatched on main
+    01f260d, patched on main 17929ab, which only drops the unused VC-1 decode
+    capability): RX 6600M 454 -> 542 of 561, every hevc_metadata failure
+    fixed; WX 3200 561 of 561 with both builds.
+remove_when: "Upstream hevc_amf puts the VPS first in its extradata, or cbs_h265 accepts parameter sets in any order in extradata"
