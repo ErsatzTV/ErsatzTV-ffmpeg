@@ -1,0 +1,91 @@
+id: amfdec-leading-frames
+patch: 0028-avcodec-amfdec-drop-leading-frames-before-the-first-keyframe.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. amfdec.c in origin/master (58584087cf) outputs every surface.
+  commits: []
+dependencies:
+  - amf-mpeg2-decoder
+platforms:
+  - windows-amf
+  - linux-amf
+reproducer: tests/amfdec-leading-frames.sh
+samples:
+  - samples/h264-320x240-open-gop-start.mkv       # make-h264-open-gop-start.sh
+  - samples/mpeg2-320x240-open-gop-dup-pts.mkv    # make-mpeg2-open-gop-dup-pts.sh
+  - samples/hevc-320x240-open-gop-start.mkv       # make-hevc-open-gop-start.sh
+  - samples/hevc-320x240-radl-start.mkv           # make-hevc-radl-start.sh
+  - samples/mpeg2-320x240-closed-gop-leading.mkv  # make-mpeg2-closed-gop-leading.sh
+  - samples/h264-320x240-open-gop-nosei.nut       # make-h264-open-gop-nosei.sh
+  - samples/h264-320x240-intra-refresh-mid.mkv    # make-h264-open-gop-start.sh
+failure_without_patch:
+  - "AMF outputs concealed leading pictures before the first keyframe"
+  - "h264_open_gop and hevc_open_gop: 91 frames from -0.033 s, software 90 from 0 s"
+  - "mpeg2_open_gop: 60 frames, software 59"
+  - "ErsatzTV next: an H.264 film clip fails external media with output matching the source 2 frames late"
+success_with_patch:
+  - "h264_no_sei: 90 frames from 0 s, bit-exact with the SEI-bearing reference"
+  - "h264_open_gop and hevc_open_gop: 90 frames from 0 s, bit-exact with software"
+  - "mpeg2_open_gop: 59 frames from 0 s, min PSNR 65.818338 dB"
+  - "hevc_radl: all 62 frames from -0.067 s, bit-exact with software"
+  - "mpeg2_closed: all 45 frames from -0.034 s, bit-exact with software"
+  - "intra_refresh: unchanged, AMF outputs 140 frames against software's 102"
+notes:
+  - "The runtime conceals missing open-GOP references without marking the output
+     surface as corrupted. Classify packets before submission and carry the
+     FFMPEG:leading property to the decoded surface, alongside FFMPEG:key and
+     the existing FFMPEG:dts. Only positively classified leading pictures with
+     pts at or before the first keyframe are eligible for dropping. Keyframe
+     tags distinguish the MPEG-2 sample's duplicate-pts B-picture from its I-picture."
+  - "HEVC: only RASL NAL units are eligible, never RADL. MPEG-2: only B-pictures
+     following an explicit open-GOP header are eligible; closed or unknown GOPs
+     are preserved. H.264: establish a timestamp recovery point only for an
+     immediate recovery SEI (recovery_frame_cnt=0), or a key-flagged packet with
+     only reference I-slices when recovery SEI is absent. Explicit delayed
+     recovery and malformed SEI do not take this fallback. IDR disables dropping because
+     it recovers in decode order. The shared H.264/HEVC splitter also handles
+     emulation prevention when reading H.264 SEI. Other codecs are unchanged."
+  - "Stop dropping once any surface has been output, reset on init/flush, and
+     honour output_corrupt/showall. Unknown or unclassified pictures are kept.
+     This is a conservative startup fix, not full recovery tracking: missing
+     timestamps, nonzero recovery counts, and streams starting mid-GOP can still
+     produce concealed pictures. It does not prove arbitrary reference chains
+     valid or invalid, and has not been tested on every AMF driver or timestamp mode."
+  - "The no-SEI NUT sample retains the first I-packet's key flag. Its oracle is
+     the original SEI-bearing sample: 90 valid frames. Default software decoding
+     of the stripped input outputs only 88, also suppressing valid pictures at
+     +0.033 and +0.067 s because heuristic recovery does not propagate to those
+     buffered pictures. Both are preserved by this patch. This fallback trusts
+     a random-access key flag plus intra slice headers; it does not validate
+     every H.264 reference chain."
+  - "An earlier timestamp-only version of this patch (etv.dev.0027a7f2) dropped
+     valid pictures: hevc_radl gave 60 instead of 62 frames; mpeg2_closed gave
+     44 instead of 45. The MPEG-2 generator verifies its cut against the full
+     decode; the leading B-picture uses backward prediction only."
+  - "The reproducer checks software and PSNR exit statuses, fails decoder
+     crashes instead of skipping them, rejects empty decodes, and pairs PSNR
+     frames by index rather than timestamp."
+last_verified:
+  version: n8.1.2
+  date: 2026-10-29
+  builds:
+    without_patch: n8.1.2-etv.dev.868dbaf3    # CI build of main 868dbaf
+    original_patch: n8.1.2-etv.dev.0027a7f2   # timestamp-only version
+    prior_revision: n8.1.2-etv.dev.0027b001   # before the no-SEI fallback
+    with_patch: n8.1.2-etv.dev.0028c001       # local win64 build of this patch set on main 868dbaf
+  how: >-
+    tests/amfdec-leading-frames.sh on Radeon Pro WX 3200 (Polaris 12,
+    1002:6981), Windows 11, driver 31.0.21924.61, through d3d11va: the
+    unpatched build fails h264_open_gop, h264_no_sei, mpeg2_open_gop and
+    hevc_open_gop and passes the rest; 0027b001 fails only h264_no_sei (91
+    frames, expected 90); the patched build passes all seven, none skipped.
+    The no-SEI sample with a user data SEI added back also gives 90 frames
+    from 0 s patched (91 from -0.033 s unpatched). output_corrupt and showall
+    each keep all 91 frames of the no-SEI sample. The draft's classifier also
+    passes isolated checks for absent, immediate, delayed and malformed SEI,
+    missing key flags, non-intra/non-reference slices, and IDR. ErsatzTV next
+    main (17929ab) amf suite: unpatched fixtures 561/561, external media 31/32
+    (the H.264 film clip 2 frames late); patched 561/561 and 32/32.
+remove_when: "Upstream amfdec drops undecodable leading pictures while preserving valid leading pictures"
