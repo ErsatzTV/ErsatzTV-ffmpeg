@@ -1,0 +1,61 @@
+id: amfdec-frames-context-format
+patch: 0030-avcodec-amfdec-re-create-the-frames-context-for-the-decoded-format.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  # Not reported. amfdec.c in origin/master (2026-10-29) still sets the frames
+  # context's sw_format once at init and only re-creates it after a
+  # resolution change (amf_reinit_frames_context, 3b55818764/bccaf86a89).
+  commits: []
+dependencies:
+  - amfdec-hdr-side-data      # touches amfdec.c after 0029; applies with offsets only
+platforms:
+  - windows-amf
+  - linux-amf                 # same decoder code; the Linux runtime is untested
+reproducer: tests/amfdec-frames-context-format.sh
+samples:
+  - samples/av1-640x360-hdr10-mdcv.mkv   # remuxed to IVF by the reproducer (no container HDR metadata)
+failure_without_patch:
+  - "[hwdownload] Failed to download frame: -22."
+  - "vpp_amf: [vf#0:0] Error while filtering: Unknown error occurred"
+success_with_patch:
+  - "hwdownload to P010 returns every frame, bit-exact with libdav1d"
+  - "vpp_amf and hevc_amf run to the end"
+notes:
+  - "MECHANISM: amf_decode_init() reads AMF_VIDEO_DECODER_OUTPUT_FORMAT before
+     any packet and builds the hardware frames context from it (NV12 when the
+     runtime has nothing yet). The AV1 component decodes 8 and 10-bit, and the
+     runtime defers its format until it parses the sequence header (trace:
+     'parser doesn't have bitness, width or height, initialization deferred to
+     frame processing', then 'Decoder stream ... format P010'). amfdec
+     updates avctx->sw_pix_fmt per surface but attaches the init-time frames
+     context to every frame, so consumers see NV12 frames that hold P010
+     surfaces. HEVC Main10 was unaffected in every container tried: the
+     runtime reported its bit depth at init. VP9 was not tested."
+  - "The patch compares each surface's format with the frames context's
+     sw_format and, when they differ, allocates a new frames context with the
+     surface's format and the old size. A 10-bit AV1 stream gets it on its
+     first output, before fftools configures a filter graph; 8-bit and
+     unaffected codecs never take the branch."
+  - "Found with 0029: once the duplicate HDR side data no longer fails filter
+     negotiation, ErsatzTV next's 10-bit AV1 HDR fixtures failed here. Raw
+     OBUs (no container metadata) fail the same way without 0029."
+last_verified:
+  version: n8.1.2
+  date: 2026-10-29
+  builds:
+    without_patch: n8.1.2-etv.dev.d1f3fe60     # CI build of main d1f3fe6
+    with_patch: n8.1.2-etv.dev.00300002        # local win64 build, main d1f3fe6 + 0029 + 0030
+  how: >-
+    tests/amfdec-frames-context-format.sh on Windows 11 through d3d11va, on
+    the RX 6600M (Navi 23, 1002:73ff) and the Radeon 680M (Rembrandt,
+    1002:1681), driver 32.0.21045.5002: the unpatched build and a build with
+    0029 alone fail download (-22) and vpp on both GPUs; the patched build
+    passes both, 48/48 frames, the P010 download bit-exact with libdav1d, and
+    logs "Decoder outputs p010le, frames context has nv12; re-creating it".
+    HEVC Main10 (MPEG-TS, raw Annex B, Matroska, MP4) reports its bit depth
+    at init on this runtime and never takes the new branch. Radeon Pro WX
+    3200 (Polaris 12, 1002:6981), driver 31.0.21924.61: skips (no AV1
+    decode). ErsatzTV next amf suite on both: see 0029.
+remove_when: "Upstream amfdec re-creates or updates the frames context when the decoded surface format changes"

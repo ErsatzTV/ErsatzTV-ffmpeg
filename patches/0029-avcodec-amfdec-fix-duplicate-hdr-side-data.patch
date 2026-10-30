@@ -1,0 +1,139 @@
+amfdec attached the runtime's mastering display and content light metadata
+to every PQ frame with av_*_create_side_data(), without checking for the
+copies ff_decode_frame_props() has already put there from the container. A
+frame with two of a non-multi side data type makes fftools fail filter
+negotiation with -17 (File exists), so HDR10 sources with container
+metadata (Matroska Colour, MP4 mdcv/clli) failed to transcode whenever AMF
+decoded them.
+
+Export the metadata through ff_decode_mastering_display_new() and
+ff_decode_content_light_new(), as the other hardware decoders do, so the
+decoder's copy replaces the container's (or is dropped when the caller
+prefers packet side data).
+
+Because the decoder's copy now wins, it has to be right. For AV1 the
+runtime returns the metadata OBU's fixed point values (chromaticity 0.16,
+max luminance 24.8, min luminance 18.14) instead of the 50000/10000 units
+AMFHDRMetadata documents, with the primaries rotated (its red, green and
+blue slots hold blue, red and green). Convert those. Also take
+min_luminance from minMasteringLuminance instead of maxMasteringLuminance,
+and release the metadata buffer, which amf_get_property_buffer() returns
+with a reference.
+
+diff --git a/libavcodec/amfdec.c b/libavcodec/amfdec.c
+--- a/libavcodec/amfdec.c
++++ b/libavcodec/amfdec.c
+@@ -393,6 +393,63 @@
+     return res;
+ }
+ 
++static int amf_export_hdr_side_data(AVCodecContext *avctx, const AMFHDRMetadata *hdrmeta, AVFrame *frame)
++{
++    AVMasteringDisplayMetadata *mastering;
++    const amf_uint16 *primaries[3] = { hdrmeta->redPrimary, hdrmeta->greenPrimary, hdrmeta->bluePrimary };
++    int chroma_den   = 50000;
++    int max_luma_den = 10000;
++    int min_luma_den = 10000;
++    int ret;
++
++    // For AV1 the runtime passes the metadata OBU's values in their own fixed
++    // point, and its red/green/blue slots hold blue/red/green, as if it applied
++    // HEVC's G,B,R order to AV1's R,G,B.
++    if (avctx->codec_id == AV_CODEC_ID_AV1) {
++        primaries[0]  = hdrmeta->greenPrimary;
++        primaries[1]  = hdrmeta->bluePrimary;
++        primaries[2]  = hdrmeta->redPrimary;
++        chroma_den    = 1 << 16;
++        max_luma_den  = 1 << 8;
++        min_luma_den  = 1 << 14;
++    }
++
++    ret = ff_decode_mastering_display_new(avctx, frame, &mastering);
++    if (ret < 0)
++        return ret;
++
++    if (mastering) {
++        for (int i = 0; i < 3; i++) {
++            mastering->display_primaries[i][0] = av_make_q(primaries[i][0], chroma_den);
++            mastering->display_primaries[i][1] = av_make_q(primaries[i][1], chroma_den);
++        }
++
++        mastering->white_point[0] = av_make_q(hdrmeta->whitePoint[0], chroma_den);
++        mastering->white_point[1] = av_make_q(hdrmeta->whitePoint[1], chroma_den);
++
++        mastering->max_luminance = av_make_q(hdrmeta->maxMasteringLuminance, max_luma_den);
++        mastering->min_luminance = av_make_q(hdrmeta->minMasteringLuminance, min_luma_den);
++
++        mastering->has_luminance = 1;
++        mastering->has_primaries = 1;
++    }
++
++    if (hdrmeta->maxContentLightLevel) {
++        AVContentLightMetadata *light;
++
++        ret = ff_decode_content_light_new(avctx, frame, &light);
++        if (ret < 0)
++            return ret;
++
++        if (light) {
++            light->MaxCLL  = hdrmeta->maxContentLightLevel;
++            light->MaxFALL = hdrmeta->maxFrameAverageLightLevel;
++        }
++    }
++
++    return 0;
++}
++
+ static int amf_amfsurface_to_avframe(AVCodecContext *avctx, AMFSurface* surface, AVFrame *frame)
+ {
+     AMFVariantStruct    var = {0};
+@@ -468,43 +525,14 @@
+         ret = amf_get_property_buffer((AMFData *)surface, AMF_VIDEO_DECODER_HDR_METADATA, &hdrmeta_buffer);
+         if (hdrmeta_buffer != NULL) {
+             AMFHDRMetadata * hdrmeta = (AMFHDRMetadata*)hdrmeta_buffer->pVtbl->GetNative(hdrmeta_buffer);
+-            if (ret != AMF_OK)
++            if (ret != AMF_OK) {
++                hdrmeta_buffer->pVtbl->Release(hdrmeta_buffer);
+                 return ret;
+-            if (hdrmeta != NULL) {
+-                AVMasteringDisplayMetadata *mastering = av_mastering_display_metadata_create_side_data(frame);
+-                const int chroma_den = 50000;
+-                const int luma_den = 10000;
+-
+-                if (!mastering)
+-                    return AVERROR(ENOMEM);
+-
+-                mastering->display_primaries[0][0] = av_make_q(hdrmeta->redPrimary[0], chroma_den);
+-                mastering->display_primaries[0][1] = av_make_q(hdrmeta->redPrimary[1], chroma_den);
+-
+-                mastering->display_primaries[1][0] = av_make_q(hdrmeta->greenPrimary[0], chroma_den);
+-                mastering->display_primaries[1][1] = av_make_q(hdrmeta->greenPrimary[1], chroma_den);
+-
+-                mastering->display_primaries[2][0] = av_make_q(hdrmeta->bluePrimary[0], chroma_den);
+-                mastering->display_primaries[2][1] = av_make_q(hdrmeta->bluePrimary[1], chroma_den);
+-
+-                mastering->white_point[0] = av_make_q(hdrmeta->whitePoint[0], chroma_den);
+-                mastering->white_point[1] = av_make_q(hdrmeta->whitePoint[1], chroma_den);
+-
+-                mastering->max_luminance = av_make_q(hdrmeta->maxMasteringLuminance, luma_den);
+-                mastering->min_luminance = av_make_q(hdrmeta->maxMasteringLuminance, luma_den);
+-
+-                mastering->has_luminance = 1;
+-                mastering->has_primaries = 1;
+-                if (hdrmeta->maxContentLightLevel) {
+-                   AVContentLightMetadata *light = av_content_light_metadata_create_side_data(frame);
+-
+-                    if (!light)
+-                        return AVERROR(ENOMEM);
+-
+-                    light->MaxCLL  = hdrmeta->maxContentLightLevel;
+-                    light->MaxFALL = hdrmeta->maxFrameAverageLightLevel;
+-                }
+             }
++            ret = hdrmeta ? amf_export_hdr_side_data(avctx, hdrmeta, frame) : 0;
++            hdrmeta_buffer->pVtbl->Release(hdrmeta_buffer);
++            if (ret < 0)
++                return ret;
+         }
+     }
+     return 0;

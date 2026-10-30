@@ -1,0 +1,69 @@
+amfdec sets up its hardware frames context at init from the runtime's
+output format. For AV1 the runtime has not parsed a sequence header yet
+(one component decodes both 8 and 10-bit), so it reports NV12, and the
+frames context stays NV12 when the stream turns out to be 10-bit. Every
+P010 surface then goes out with an NV12 frames context: hwdownload to P010
+fails with EINVAL and vpp_amf fails to process the frame.
+
+When a decoded surface's format differs from the frames context's, create a
+new frames context with the surface's format before attaching it to the
+frame. A 10-bit AV1 stream gets it on its first frame, before any filter
+graph is configured.
+
+diff --git a/libavcodec/amfdec.c b/libavcodec/amfdec.c
+--- a/libavcodec/amfdec.c
++++ b/libavcodec/amfdec.c
+@@ -33,6 +33,7 @@
+ #include "sei.h"
+ #include "decode_bsf.h"
+ #include "libavutil/mastering_display_metadata.h"
++#include "libavutil/pixdesc.h"
+ 
+ #if CONFIG_D3D11VA
+ #include "libavutil/hwcontext_d3d11va.h"
+@@ -301,6 +302,35 @@
+     return 0;
+ }
+ 
++// The frames context is set up at init, before the runtime has parsed a
++// sequence header. AV1 uses one component for 8 and 10-bit, so the runtime
++// reports NV12 there and only learns the bit depth from the stream.
++static int amf_update_frames_context(AVCodecContext *avctx, enum AVPixelFormat sw_format)
++{
++    const AVHWFramesContext *hwframes_ctx;
++    int width, height;
++
++    if (!avctx->hw_frames_ctx || sw_format == AV_PIX_FMT_NONE)
++        return 0;
++
++    hwframes_ctx = (const AVHWFramesContext *)avctx->hw_frames_ctx->data;
++    if (hwframes_ctx->sw_format == sw_format)
++        return 0;
++
++    av_log(avctx, AV_LOG_VERBOSE, "Decoder outputs %s, frames context has %s; re-creating it\n",
++           av_get_pix_fmt_name(sw_format), av_get_pix_fmt_name(hwframes_ctx->sw_format));
++
++    width  = hwframes_ctx->width;
++    height = hwframes_ctx->height;
++
++    av_buffer_unref(&avctx->hw_frames_ctx);
++    avctx->hw_frames_ctx = av_hwframe_ctx_alloc(avctx->hw_device_ctx);
++    if (!avctx->hw_frames_ctx)
++        return AVERROR(ENOMEM);
++
++    return amf_init_frames_context(avctx, sw_format, width, height);
++}
++
+ static int amf_decode_init(AVCodecContext *avctx)
+ {
+     AMFDecoderContext *ctx = avctx->priv_data;
+@@ -483,6 +513,9 @@
+         frame->format =  AV_PIX_FMT_AMF_SURFACE;
+         format_amf = surface->pVtbl->GetFormat(surface);
+         avctx->sw_pix_fmt = av_amf_to_av_format(format_amf);
++        ret = amf_update_frames_context(avctx, avctx->sw_pix_fmt);
++        if (ret < 0)
++            return ret;
+         frame->hw_frames_ctx = av_buffer_ref(avctx->hw_frames_ctx);
+     } else {
+         ret = surface->pVtbl->Convert(surface, AMF_MEMORY_HOST);
