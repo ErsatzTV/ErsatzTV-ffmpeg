@@ -42,6 +42,11 @@ notes:
      the avformat_find_stream_info() probe decoder before it reaches a
      sequence header. They are unrelated: the real decoder gets the sequence
      header as extradata."
+  - "FATE: the patch updates the fate-sub-mcc REF, whose old value had the
+     pile-up baked in. scte20.ts opens on an open-GOP B-frame, and stock put
+     its captions on the first caption frame (cc_count 6: FC8080 FD8080
+     twice, then that frame's own 2). Only the first CDP changes; the dropped
+     triplets were null padding, so no caption text is lost."
   - "Found with a broadcast recording that starts mid-GOP, through ErsatzTV
      next's VAAPI transcode. Its deinterlaced variant passed only because
      deinterlace_vaapi drops the first frame, the one with the pile-up."
