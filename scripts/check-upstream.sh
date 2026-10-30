@@ -1,7 +1,8 @@
 #!/bin/sh
 # Usage: check-upstream.sh <work dir>
 # Verifies the upstream identity in release.json (tag -> commit, tarball
-# checksum) and that the whole patch set applies, in order, to that tarball.
+# checksum), that the upstream-<version> release holds the fallback tarball,
+# and that the whole patch set applies, in order, to that tarball.
 # Leaves the verified tarball at <work dir>/ffmpeg-<version>.tar.bz2.
 # <work dir> must be outside any git checkout: git apply inside a repo
 # silently skips paths outside the current directory.
@@ -28,8 +29,10 @@ work=$(cd "$work" && pwd)
 ! git -C "$work" rev-parse --git-dir >/dev/null 2>&1 || fail "$work is inside a git checkout"
 
 tarball="$work/ffmpeg-$version.tar.bz2"
-curl -Lfs -o "$tarball" "https://ffmpeg.org/releases/ffmpeg-$version.tar.bz2"
-echo "$sha256  $tarball" | sha256sum -c - >/dev/null || fail "tarball checksum mismatch"
+sh "$root/scripts/fetch-upstream.sh" "$version" "$sha256" "$tarball" || fail "no tarball matches tarball_sha256"
+# the Docker builds fall back to this copy; fetch-upstream.sh checks its bytes
+mirror="https://github.com/ErsatzTV/ErsatzTV-ffmpeg/releases/download/upstream-$version/ffmpeg-$version.tar.bz2"
+curl -LfsI -o /dev/null "$mirror" || fail "missing $mirror (docs/releasing.md)"
 
 src="$work/ffmpeg"
 rm -rf "$src"

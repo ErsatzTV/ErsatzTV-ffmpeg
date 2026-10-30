@@ -10,13 +10,12 @@ FROM ${DEPS_IMAGE} AS devel-base
 ARG FFMPEG_VERSION
 ARG FFMPEG_SHA256
 COPY patches/*.patch /tmp/ffmpeg-patches/
+COPY scripts/fetch-upstream.sh /tmp/
 RUN : "${FFMPEG_VERSION:?build arg required}" "${FFMPEG_SHA256:?build arg required}" && \
     mkdir -p /tmp/ffmpeg && \
-    curl -Lf -o /tmp/ffmpeg.tar.bz2 \
-    https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 && \
-    echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.bz2" | sha256sum -c - && \
+    sh /tmp/fetch-upstream.sh "${FFMPEG_VERSION}" "${FFMPEG_SHA256}" /tmp/ffmpeg.tar.bz2 && \
     tar -jx --strip-components=1 -C /tmp/ffmpeg -f /tmp/ffmpeg.tar.bz2 && \
-    rm /tmp/ffmpeg.tar.bz2 && \
+    rm /tmp/ffmpeg.tar.bz2 /tmp/fetch-upstream.sh && \
     for p in /tmp/ffmpeg-patches/*.patch; do \
     [ -e "$p" ] || continue; \
     echo "Applying FFmpeg patch: $p"; \

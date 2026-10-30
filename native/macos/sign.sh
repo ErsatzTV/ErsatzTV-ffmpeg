@@ -42,6 +42,17 @@ if [ "$(echo "$result" | jq -r .status)" != Accepted ]; then
     exit 1
 fi
 
+# the ticket reaches Gatekeeper's online lookup minutes after Accepted; wait so
+# nothing downstream sees the binaries as unnotarized
+for bin in "$work/$name"/bin/*; do
+    tries=0
+    until codesign --verify --strict --check-notarization -R=notarized "$bin" 2>/dev/null; do
+        tries=$((tries + 1))
+        [ "$tries" -lt 40 ] || { echo "sign: no notarization ticket for $bin after 10m ($id)" >&2; exit 1; }
+        sleep 15
+    done
+done
+
 # no AppleDouble ._ entries for extended attributes
 COPYFILE_DISABLE=1 tar -cJf "$archive" -C "$work" "$name"
 echo "sign: $archive signed and notarized ($id)"

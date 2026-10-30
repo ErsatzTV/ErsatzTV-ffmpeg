@@ -5,6 +5,17 @@ These steps are for maintainers.
 ## Make a release
 
 1. Increase `revision` in [`release.json`](../release.json). For a new FFmpeg version, also change the version, tag, commit and tarball checksum, and set `revision` to 1. Make sure that all patches apply to the new version. If the release adds or changes a patch, or changes the FFmpeg version, [run the FATE sweep](#run-the-fate-sweep).
+
+   For a new FFmpeg version, also publish the upstream tarball as the `upstream-<version>` release. The Docker builds download it from there when ffmpeg.org fails, and CI fails while it is missing. Check the checksum before you upload it:
+
+   ```sh
+   v=8.1.2
+   curl -LfO "https://ffmpeg.org/releases/ffmpeg-$v.tar.bz2"
+   echo "$(jq -r .ffmpeg.tarball_sha256 release.json)  ffmpeg-$v.tar.bz2" | sha256sum -c -
+   gh release create "upstream-$v" "ffmpeg-$v.tar.bz2" --target main --prerelease --latest=false \
+     --title "FFmpeg $v source" --notes "Unmodified ffmpeg.org release tarball, used as a download fallback."
+   ```
+
 2. Add `release-notes/<tag>.md`. Write the changes that users can see.
 3. Merge to `main`. Make sure that CI passes. CI checks that `release-notes/<tag>.md` exists. A change to only the revision, the release notes or the docs does not build anything, because it does not change the builds. Then the builds of the previous `main` commit must have passed.
 4. Tag the `native/FFmpeg-Builds` submodule commit in the fork as `etv/<tag>`. The release workflow stops if this tag is missing or points to a different commit. A ruleset prevents changes to `etv/*` tags, so do this step immediately before the next step.
