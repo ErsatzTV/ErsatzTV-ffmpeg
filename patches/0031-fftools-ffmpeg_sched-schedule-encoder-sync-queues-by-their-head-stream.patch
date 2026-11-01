@@ -1,0 +1,162 @@
+--- a/fftools/ffmpeg_sched.c
++++ b/fftools/ffmpeg_sched.c
+@@ -104,6 +104,10 @@
+ 
+     unsigned           *enc_idx;
+     unsigned         nb_enc_idx;
++
++    // encoder fed by the queue's head stream, or -1; protected by
++    // Scheduler.schedule_lock, written only while also holding lock
++    int                 head_enc;
+ } SchSyncQueue;
+ 
+ typedef struct SchEnc {
+@@ -117,6 +121,7 @@
+     // [0] - index of the sync queue in Scheduler.sq_enc,
+     // [1] - index of this encoder in the sq
+     int                 sq_idx[2];
++    int                 sq_limiting;
+ 
+     /* Opening encoders is somewhat nontrivial due to their interaction with
+      * sync queues, which are (among other things) responsible for maintaining
+@@ -896,6 +901,8 @@
+     if (!sq->frame)
+         return AVERROR(ENOMEM);
+ 
++    sq->head_enc = -1;
++
+     ret = pthread_mutex_init(&sq->lock, NULL);
+     if (ret)
+         return AVERROR(ret);
+@@ -925,8 +932,9 @@
+     if (ret < 0)
+         return ret;
+ 
+-    enc->sq_idx[0] = sq_idx;
+-    enc->sq_idx[1] = ret;
++    enc->sq_idx[0]   = sq_idx;
++    enc->sq_idx[1]   = ret;
++    enc->sq_limiting = limiting;
+ 
+     if (max_frames != INT64_MAX)
+         sq_limit_frames(sq->sq, enc->sq_idx[1], max_frames);
+@@ -1389,6 +1397,24 @@
+     }
+ }
+ 
++// Feeding a limiting stream that its sync queue is not waiting on only grows
++// the queue, whatever the muxer sees.
++static int enc_sq_waits_on_other(const Scheduler *sch, SchedulerNode src)
++{
++    const SchEnc *enc;
++    const SchSyncQueue *sq;
++
++    if (src.type != SCH_NODE_TYPE_ENC)
++        return 0;
++
++    enc = &sch->enc[src.idx];
++    if (enc->sq_idx[0] < 0 || !enc->sq_limiting)
++        return 0;
++
++    sq = &sch->sq_enc[enc->sq_idx[0]];
++    return sq->head_enc >= 0 && sq->head_enc != (int)src.idx;
++}
++
+ static void schedule_update_locked(Scheduler *sch)
+ {
+     int64_t dts;
+@@ -1422,6 +1448,8 @@
+             // and not too far ahead of the trailing stream
+             if (ms->source_finished)
+                 continue;
++            if (enc_sq_waits_on_other(sch, ms->src))
++                continue;
+             if (dts == AV_NOPTS_VALUE && ms->last_dts != AV_NOPTS_VALUE)
+                 continue;
+             if (dts != AV_NOPTS_VALUE && ms->last_dts - dts >= SCHEDULE_TOLERANCE)
+@@ -1433,6 +1461,21 @@
+         }
+     }
+ 
++    // The muxer only sees what an encoder sync queue has released, and the
++    // encoders after it delay streams by different amounts, so a queue's head
++    // stream can look ahead at the muxer while the queue waits on it. With
++    // separate demuxers, choking it would stall the queue until it overflows.
++    for (unsigned i = 0; i < sch->nb_sq_enc; i++) {
++        SchSyncQueue *sq = &sch->sq_enc[i];
++
++        if (sq->head_enc < 0)
++            continue;
++
++        unchoke_for_stream(sch, (SchedulerNode){ .type = SCH_NODE_TYPE_ENC,
++                                                 .idx  = sq->head_enc });
++        have_unchoked = 1;
++    }
++
+     // also unchoke any sources feeding into closed filter graph inputs, so
+     // that they can observe the downstream EOF
+     for (unsigned i = 0; i < sch->nb_filters; i++) {
+@@ -1902,6 +1945,20 @@
+         }
+     }
+ 
++    {
++        int head     = sq_head_stream(sq->sq);
++        int head_enc = head >= 0 ? sq->enc_idx[head] : -1;
++
++        if (head_enc != sq->head_enc) {
++            pthread_mutex_lock(&sch->schedule_lock);
++
++            sq->head_enc = head_enc;
++            schedule_update_locked(sch);
++
++            pthread_mutex_unlock(&sch->schedule_lock);
++        }
++    }
++
+ finish:
+     pthread_mutex_unlock(&sq->lock);
+ 
+--- a/fftools/sync_queue.c
++++ b/fftools/sync_queue.c
+@@ -595,6 +595,25 @@
+     return ret;
+ }
+ 
++int sq_head_stream(const SyncQueue *sq)
++{
++    // until every limiting stream has a timestamp, the queue waits on the
++    // first one that has none
++    if (sq->head_stream < 0) {
++        for (unsigned int i = 0; i < sq->nb_streams; i++) {
++            const SyncQueueStream *st = &sq->streams[i];
++            if (st->limiting && !st->finished && st->head_ts == AV_NOPTS_VALUE)
++                return i;
++        }
++        return -1;
++    }
++
++    if (sq->streams[sq->head_stream].finished)
++        return -1;
++
++    return sq->head_stream;
++}
++
+ int sq_add_stream(SyncQueue *sq, int limiting)
+ {
+     SyncQueueStream *tmp, *st;
+--- a/fftools/sync_queue.h
++++ b/fftools/sync_queue.h
+@@ -115,4 +115,12 @@
+  */
+ int sq_receive(SyncQueue *sq, int stream_idx, SyncQueueFrame frame);
+ 
++/**
++ * @return the index of the unfinished limiting stream the queue waits on
++ *         before it can output: the first one without any frames yet, else
++ *         the one that lags furthest behind; or a negative value when there
++ *         is none
++ */
++int sq_head_stream(const SyncQueue *sq);
++
+ #endif // FFTOOLS_SYNC_QUEUE_H
