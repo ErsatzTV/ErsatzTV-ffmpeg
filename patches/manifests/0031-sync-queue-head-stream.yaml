@@ -1,0 +1,74 @@
+id: sync-queue-head-stream
+patch: 0031-fftools-ffmpeg_sched-schedule-encoder-sync-queues-by-their-head-stream.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  commits: []
+  # Not reported. schedule_update_locked() still throttles only by muxer dts
+  # in origin/master as of 2026-11-01, and the sync queue code is unchanged.
+  # Stock n9.0.2 fails the reproducer (301 frames held).
+dependencies: []
+platforms:
+  - all                       # fftools scheduling; no platform or hwaccel involvement
+reproducer: tests/sync-queue-separate-inputs.sh
+samples: []                   # the reproducer generates its input with lavfi
+failure_without_patch:
+  - "with video and audio from separate inputs and -shortest, video frames pile up
+     in the encoder sync queue until it overflows (-shortest_buf_duration, 10 s)"
+  - "reproducer counts ~300 video frames held and exits 1"
+  - "QSV on runtimes before 2.9 (fixed pool of 64): \"[Parsed_scale_qsv] Can't
+     allocate a surface\", exit 244, about 10 s into the output"
+success_with_patch:
+  - "the sync queue holds a few frames; no overflow heartbeats"
+  - "reproducer counts 4 video frames held and exits 0"
+notes:
+  - "MECHANISM: with -shortest, encoded audio and video pass through an
+     encoder sync queue, which releases frames only up to its head stream (the
+     limiting stream that lags furthest behind). The scheduler unchokes
+     demuxers only for muxer streams within SCHEDULE_TOLERANCE (100 ms) of the
+     trailing muxer dts. The muxer sees packets only after the encoders, so an
+     encoder delay over 100 ms (x264 lookahead, h264_qsv async depth and
+     queues) makes video look trailing while it is ahead in the sync queue.
+     With one input this is harmless: unchoking video's demuxer also reads the
+     interleaved audio. With separate inputs, audio's demuxer stays choked as
+     ahead, video's keeps running, and video frames wait in the queue until it
+     overflows. At startup nothing has reached the muxer, so nothing is choked
+     and the cheaper stream (audio) runs about 10 s ahead into the queue
+     first."
+  - "FIX: the scheduler records each encoder sync queue's head stream
+     (sq_head_stream(), which before every limiting stream has a frame is the
+     first one without any) whenever a frame passes the queue. It always
+     unchokes the head stream's source, and does not unchoke the other limiting
+     streams of that queue by muxer dts. Streams outside encoder sync queues
+     are scheduled as before."
+  - "Symptom in ErsatzTV next (next#396): on QSV runtimes before 2.9, next
+     reads audio from a second -i of the same file, because files that store
+     audio far behind video (some ASF) exhaust the pool through -shortest with a
+     single demuxer. Without this patch every such stream fails about 10 s in
+     with \"Can't allocate a surface\"."
+  - "Workarounds without a rebuild: one input (not for late-audio files), no
+     -shortest, or -shortest_buf_duration 0.5 (cuts the tail when the file ends
+     before -t)."
+last_verified:
+  version: n8.1.2
+  date: 2026-11-01
+  builds:
+    without_patch: n8.1.2-etv.6
+    with_patch: n8.1.2-etv.dev.0db86ecb   # linux64, patches 0001-0030 (8.1.2-7) + this patch
+  how: >-
+    Reproducer on Linux x86_64: etv.6 295 frames held, exit 1; stock n9.0.2
+    301, exit 1; patched 4, exit 0. Intel Kaby Lake (runtime API 1.35, iHD
+    25.2.3), next's QSV chain (h264_qsv decode or software decode + hwupload,
+    scale_qsv, h264_qsv, -shortest) with audio from a second -i: 1080p25 HEVC
+    MKV for 30 s with and without a 200 s seek, a 24 s H.264 MKV and MP4 for
+    15 s at 720p and 1080p, and a WMV3 ASF that stores audio ~6 s behind video
+    for 15 s fail on etv.6 at ~10.4 s (12.2 s for the ASF) and pass patched, with output sizes identical
+    to one input. The sync queue logs no overflow patched, for h264_qsv
+    (async_depth 4 and 1) and libx264 (veryfast, zerolatency). One-input
+    throughput unchanged (QSV 1080p 60 s 5.60 vs 5.59 s, libx264 24 s 0.69 vs
+    0.71 s, mean of 3). ErsatzTV next integration suites: qsv 566/566 and
+    software 607/607, including past_shortest_buffer, which fails on etv.6. FATE sweep of 8.1.2-7 + this patch: 5345 tests,
+    no new failures. Other platforms not run; the code is
+    platform-independent.
+remove_when: "An equivalent upstream fix is present and the unpatched reproducer passes"
