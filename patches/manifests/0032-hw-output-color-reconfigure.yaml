@@ -1,0 +1,68 @@
+id: hw-output-color-reconfigure
+patch: 0032-fftools-ffmpeg_filter-do-not-pin-color-of-hw-outputs.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  commits: []
+  # Not reported. configure_filtergraph() still pins the output color space
+  # and range (and now chroma location) after the first configuration in
+  # origin/master as of 2026-11-02. Stock n9.0.2 fails the reproducer
+  # (exit 218, 30 of 60 frames).
+dependencies: []
+platforms:
+  - all                       # fftools; any hwaccel whose frames reach the output
+reproducer: tests/hw-output-color-reconfigure.sh
+samples: []                   # the reproducer generates its input with lavfi
+failure_without_patch:
+  - "hardware-decoded input whose color tags change mid-stream (spliced or
+     smart-cut files), hardware frames to the encoder: \"Impossible to convert
+     between the formats supported by the filter '<hw filter>' and the filter
+     'auto_scale_0'\", \"Error reinitializing filters!\", exit 218 at the change"
+  - "reproducer: exit 218 after 30 of 60 frames"
+success_with_patch:
+  - "the graph is reconfigured and every frame is encoded"
+  - "reproducer: exit 0, 60 of 60 frames"
+notes:
+  - "MECHANISM: after the first configuration, configure_filtergraph() pins
+     each output's color space and range to what the sink negotiated, so a
+     reconfiguration keeps them. When the input's tags change, the rebuilt
+     graph needs a conversion before the output, and the automatic scale
+     filter is the only one libavfilter can insert. It cannot take hardware
+     frames. With software frames anywhere upstream of an hwupload the
+     conversion fits there, so only graphs fed by a hardware decoder fail."
+  - "FIX: when the output's pixel format is a hardware format, the color space
+     and range are not pinned after configuration. Values from the output
+     options (-colorspace, -color_range) still apply."
+  - "TRADE-OFF: frames after the change keep their own tags, and the encoder
+     keeps the color it was opened with, so the stream after the change is
+     labeled with the first part's color (bt709 for smpte170m content in the
+     reproducer). The same thing happened before color negotiation was added to
+     fftools. Software frames are still converted."
+  - "Symptom in ErsatzTV next: an item from a spliced file whose color tags
+     change partway fails at the change on QSV, VAAPI and CUDA. next passes
+     -noautoscale; without it the reconfiguration also inserts a software scale
+     for the pinned output size, which this patch does not change."
+last_verified:
+  version: n8.1.2
+  date: 2026-11-02
+  builds:
+    without_patch: n8.1.2-etv.6
+    with_patch: n8.1.2-etv.dev.00320001   # linux64 and win64, patches 0001-0031 (8.1.2-7 + 0031) + this patch
+  how: >-
+    Reproducer (h264 VAAPI decode, scale_vaapi, h264_vaapi, -noautoscale) on
+    Linux x86_64: etv.6 and etv.7 exit 218 after 30 of 60 frames, stock n9.0.2
+    the same; patched exit 0, 60 of 60, on Intel iHD 26.3.5 (Arc A380), i965
+    (Haswell), radeonsi (Polaris 12 and RDNA4). The patched output is tagged
+    bt709 throughout. ErsatzTV next integration suites with the patch, Linux:
+    qsv 575/575 and vaapi 595/595 (Arc A380), cuda 575/575 (Pascal), vaapi
+    595/595 (i965 Haswell, radeonsi Polaris 12 and RDNA4), software 616/616,
+    including a new test whose fixture changes h264 profile, level and colour
+    tags mid-stream; unpatched, that test exits 218 at the change on qsv,
+    vaapi (Arc A380, RDNA4) and cuda. Windows x86_64 (win64 build): qsv
+    575/575 patched on Alder Lake-N (D3D11); the new test fails unpatched
+    (etv.7) with the same error from overlay_qsv, and on CUDA (Pascal) from
+    overlay_cuda, and passes patched on both. AMF (Polaris 12) passes either
+    way: ErsatzTV's AMF chain overlays in software, so the conversion fits
+    before its hwupload. VideoToolbox and rkmpp not run.
+remove_when: "An equivalent upstream fix is present and the unpatched reproducer passes"
