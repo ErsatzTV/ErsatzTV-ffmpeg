@@ -66,6 +66,7 @@ last_verified:
     frame 2, patched 55 of 55 frames on the Kaby Lake box and on Windows
     x86_64, Haswell HD 4600 (D3D11, runtime 1.20). SSIM of the patched output
     against the same pipeline with hwdownload before h264_qsv: min 0.974,
-    mean 0.980 over 55 frames. ErsatzTV next watermark_graph_rebuild on
-    Haswell Windows: 2/2 patched.
+    mean 0.980 over 55 frames. ErsatzTV next integration suites with the
+    patch: qsv 575/575 on the Kaby Lake box (Linux) and on Haswell (Windows),
+    including watermark_graph_rebuild, whose h264 case fails without it.
 remove_when: "An equivalent upstream fix is present and the unpatched reproducer passes"
