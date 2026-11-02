@@ -1,0 +1,71 @@
+id: qsvenc-new-input-frame-pool
+patch: 0033-avcodec-qsvenc-switch-to-a-new-input-frame-pool.patch
+based_on: n8.1.2
+status: local
+upstream:
+  issue: null
+  commits: []
+  # Not reported. submit_frame() in origin/master as of 2026-11-02 still
+  # returns ff_qsv_find_surface_idx()'s AVERROR_BUG for a surface outside the
+  # pool the encoder was opened with.
+dependencies: []
+platforms:
+  - windows-qsv               # legacy Media SDK runtime (Haswell to Ice Lake, API < 2.9) or D3D9
+  - linux-qsv                 # same, only on a legacy libmfx runtime; oneVPL 2.9+ is dynamic
+reproducer: tests/qsvenc-new-input-frame-pool.sh
+samples: []                   # the reproducer generates its input with lavfi
+failure_without_patch:
+  - "[vf#N] Reconfiguring filter graph because video parameters changed ...
+     hwaccel changed"
+  - "[h264_qsv] Error submitting the frame for encoding."
+  - "Error encoding a frame: Internal bug, should not have happened; exit 190
+     on Linux, 0xdeb8aabe on Windows"
+  - "reproducer: exit 190 after about 21 of 60 frames"
+success_with_patch:
+  - "[h264_qsv] Input frames come from a new frame pool, switching to it
+     (verbose)"
+  - "reproducer: exit 0, 60 of 60 frames"
+notes:
+  - "MECHANISM: vpp_qsv and overlay_qsv allocate a fixed output pool of 64
+     surfaces when the runtime is older than 2.9 or the device is D3D9
+     (qsvvpp.c), and a dynamic one otherwise. The encoder's session builds its
+     memory ids from the pool it was opened with, and submit_frame() looks
+     every input surface up in them. A reconfigured filter graph allocates a
+     new pool, so the first frame from it is not found and the encoder returns
+     AVERROR_BUG before the runtime sees it. Dynamic pools have no memory ids
+     and no lookup, so oneVPL 2.9+ runtimes are not affected."
+  - "FIX: when the lookup fails and the frame comes from another frames
+     context on the same device with the same sw format and size, the encoder
+     switches to it: new memory ids built the same way as at open, swapped in
+     before the old ones are released because the session's allocator reads
+     them. Each queued frame holds a reference to the memory ids its surface
+     points into until the runtime unlocks it. Any other mismatch, including a
+     dynamic pool, fails with an error naming both pools instead of encoding
+     the wrong size."
+  - "Complements 0013, which keeps the decoder's pool when a parameter change
+     keeps the size and format. A filter between decoder and encoder (vpp_qsv,
+     overlay_qsv) still gets a new pool on every graph rebuild, and a decoder
+     size change still reallocates; this is the encoder side of both."
+  - "Symptom in ErsatzTV next: once 0032 lets a colour-tag change rebuild the
+     graph, the h264 case of watermark_graph_rebuild fails on Haswell (Windows,
+     runtime 1.20) and Kaby Lake (Linux, runtime 1.35). Without 0032 the same
+     rebuild already failed earlier (exit 218). hevc passes on Haswell because
+     it has no hevc_qsv and encodes in software."
+last_verified:
+  version: n8.1.2
+  date: 2026-11-02
+  builds:
+    without_patch: n8.1.2-etv.dev.00320001   # linux64 and win64, patches 0001-0032
+    with_patch: n8.1.2-etv.dev.00330001      # linux64 and win64, patches 0001-0032 + this patch
+  how: >-
+    Reproducer on Linux x86_64, i7-8650U (UHD 620) with libmfx 22.5.4
+    (runtime 1.35): 0032 build exit 190 after 21 of 60 frames; patched exit 0,
+    60 of 60, switching once. ErsatzTV next's 480p_h264_reinit.ts fixture
+    (profile, level and colour change at 0.5 s) through vpp_qsv to 1440x1080,
+    with and without the 1920x1080 pad, into h264_qsv: unpatched exit 190 (0xdeb8aabe on Windows) on
+    frame 2, patched 55 of 55 frames on the Kaby Lake box and on Windows
+    x86_64, Haswell HD 4600 (D3D11, runtime 1.20). SSIM of the patched output
+    against the same pipeline with hwdownload before h264_qsv: min 0.974,
+    mean 0.980 over 55 frames. ErsatzTV next watermark_graph_rebuild on
+    Haswell Windows: 2/2 patched.
+remove_when: "An equivalent upstream fix is present and the unpatched reproducer passes"

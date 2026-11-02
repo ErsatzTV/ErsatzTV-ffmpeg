@@ -1,0 +1,137 @@
+--- a/libavcodec/qsv.c
++++ b/libavcodec/qsv.c
+@@ -781,6 +781,37 @@
+     return mids;
+ }
+ 
++int ff_qsv_frames_ctx_replace(QSVFramesContext *ctx, AVBufferRef *hw_frames_ref)
++{
++    AVHWFramesContext    *frames_ctx = (AVHWFramesContext*)hw_frames_ref->data;
++    AVQSVFramesContext *frames_hwctx = frames_ctx->hwctx;
++    AVBufferRef *ref, *old_ref = ctx->hw_frames_ctx;
++    QSVMid *mids, *old_mids = ctx->mids;
++
++    if (!frames_hwctx->nb_surfaces)
++        return AVERROR(ENOSYS);
++
++    ref = av_buffer_ref(hw_frames_ref);
++    if (!ref)
++        return AVERROR(ENOMEM);
++
++    mids = qsv_create_mids(hw_frames_ref);
++    if (!mids) {
++        av_buffer_unref(&ref);
++        return AVERROR(ENOMEM);
++    }
++
++    /* the session's allocator reads ctx, so never leave it pointing at
++     * nothing; queued frames keep the old frames context alive */
++    ctx->hw_frames_ctx = ref;
++    ctx->mids          = mids;
++    ctx->nb_mids       = frames_hwctx->nb_surfaces;
++    av_buffer_unref(&old_ref);
++    av_refstruct_unref(&old_mids);
++
++    return 0;
++}
++
+ static int qsv_setup_mids(mfxFrameAllocResponse *resp, AVBufferRef *hw_frames_ref,
+                           QSVMid *mids)
+ {
+--- a/libavcodec/qsv_internal.h
++++ b/libavcodec/qsv_internal.h
+@@ -99,6 +99,10 @@
+     int queued;
+     int used;
+ 
++    /* RefStruct reference to the memory ids surface.Data.MemId points into,
++     * so they outlive a switch to another frame pool while still queued */
++    QSVMid *mids;
++
+     struct QSVFrame *next;
+ } QSVFrame;
+ 
+@@ -164,6 +168,13 @@
+ 
+ int ff_qsv_find_surface_idx(QSVFramesContext *ctx, QSVFrame *frame);
+ 
++/**
++ * Point ctx at another fixed-size frame pool on the same device, with new
++ * memory ids. The old memory ids are only unreferenced, so surfaces still
++ * queued in the session can hold their own reference to them.
++ */
++int ff_qsv_frames_ctx_replace(QSVFramesContext *ctx, AVBufferRef *hw_frames_ref);
++
+ void ff_qsv_frame_add_ext_param(AVCodecContext *avctx, QSVFrame *frame,
+                                 mfxExtBuffer *param);
+ 
+--- a/libavcodec/qsvenc.c
++++ b/libavcodec/qsvenc.c
+@@ -1872,6 +1872,7 @@
+             if (cur->frame->format == AV_PIX_FMT_QSV) {
+                 av_frame_unref(cur->frame);
+             }
++            av_refstruct_unref(&cur->mids);
+             cur->used = 0;
+         }
+         cur = cur->next;
+@@ -2029,6 +2030,33 @@
+     return 0;
+ }
+ 
++/* A reconfigured filtergraph hands the encoder frames from a new fixed pool,
++ * whose surfaces are not in the memory ids the session was opened with. */
++static int switch_frames_ctx(QSVEncContext *q, AVBufferRef *hw_frames_ref)
++{
++    AVHWFramesContext *cur = (AVHWFramesContext*)q->frames_ctx.hw_frames_ctx->data;
++    AVHWFramesContext *new = (AVHWFramesContext*)hw_frames_ref->data;
++    AVQSVFramesContext *new_hwctx = new->hwctx;
++
++    if (new->device_ref->data != cur->device_ref->data ||
++        new->sw_format != cur->sw_format ||
++        new->width != cur->width || new->height != cur->height ||
++        !new_hwctx->nb_surfaces) {
++        av_log(q->avctx, AV_LOG_ERROR, "Input frames come from a frame pool "
++               "the encoder cannot switch to: %s %dx%d, %d surfaces; the "
++               "encoder was opened with %s %dx%d\n",
++               av_get_pix_fmt_name(new->sw_format), new->width, new->height,
++               new_hwctx->nb_surfaces, av_get_pix_fmt_name(cur->sw_format),
++               cur->width, cur->height);
++        return AVERROR(EINVAL);
++    }
++
++    av_log(q->avctx, AV_LOG_VERBOSE, "Input frames come from a new frame pool, "
++           "switching to it\n");
++
++    return ff_qsv_frames_ctx_replace(&q->frames_ctx, hw_frames_ref);
++}
++
+ static int submit_frame(QSVEncContext *q, const AVFrame *frame,
+                         QSVFrame **new_frame)
+ {
+@@ -2048,10 +2076,17 @@
+ 
+         if (q->frames_ctx.mids) {
+             ret = ff_qsv_find_surface_idx(&q->frames_ctx, qf);
++            if (ret < 0 && frame->hw_frames_ctx &&
++                frame->hw_frames_ctx->data != q->frames_ctx.hw_frames_ctx->data) {
++                ret = switch_frames_ctx(q, frame->hw_frames_ctx);
++                if (ret >= 0)
++                    ret = ff_qsv_find_surface_idx(&q->frames_ctx, qf);
++            }
+             if (ret < 0)
+                 return ret;
+ 
+             qf->surface.Data.MemId = &q->frames_ctx.mids[ret];
++            av_refstruct_replace(&qf->mids, q->frames_ctx.mids);
+         }
+     } else {
+         /* make a copy if the input is not padded as libmfx requires */
+@@ -2720,6 +2755,7 @@
+     while (cur) {
+         q->work_frames = cur->next;
+         av_frame_free(&cur->frame);
++        av_refstruct_unref(&cur->mids);
+         free_encoder_ctrl(&cur->enc_ctrl);
+         av_freep(&cur);
+         cur = q->work_frames;
