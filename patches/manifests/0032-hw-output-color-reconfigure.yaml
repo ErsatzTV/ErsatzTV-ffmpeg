@@ -64,5 +64,9 @@ last_verified:
     (etv.7) with the same error from overlay_qsv, and on CUDA (Pascal) from
     overlay_cuda, and passes patched on both. AMF (Polaris 12) passes either
     way: ErsatzTV's AMF chain overlays in software, so the conversion fits
-    before its hwupload. VideoToolbox and rkmpp not run.
+    before its hwupload. macOS x86_64 (CI build etv.dev.f3fb8432, Coffee
+    Lake): VideoToolbox passes the new test unpatched (etv.6) and patched, for
+    the same reason (scale_vt, then a software overlay). Linux arm64 (CI build
+    etv.dev.f3fb8432, RK3588): rkmpp passes the new test unpatched (etv.7) and
+    patched, for the same reason (scale_rkrga, then a software overlay).
 remove_when: "An equivalent upstream fix is present and the unpatched reproducer passes"
