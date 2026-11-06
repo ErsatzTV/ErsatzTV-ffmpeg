@@ -142,6 +142,11 @@ Default SemVer tools do not sort these tags correctly. For Renovate, use regex v
 
 Make sure that your tool sorts `8.1.2-10` after `8.1.2-9`.
 
+## Experimental rendering
+
+- [Direct NV12 output](docs/direct-nv12.md) is an explicit Intel-validated VAAPI/Vulkan opt-in; other drivers and modifiers remain unverified.
+- [Single-pass NV12 output](docs/nv12-match.md) for libplacebo tone mapping builds on it (`DIRECT_NV12_OUTPUT=1`, `nv12_output=match`).
+
 ## Build and release
 
 - [Build](docs/building.md) the docker images and the native builds.
