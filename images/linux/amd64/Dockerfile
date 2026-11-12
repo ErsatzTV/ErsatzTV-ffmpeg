@@ -6,6 +6,25 @@ ARG BASE_IMAGE_TAG=noble
 
 FROM ${DEPS_IMAGE} AS devel-base
 
+# Optional Linux/Intel trial. The normal dependency image stays unchanged.
+ARG DIRECT_NV12_OUTPUT=0
+ARG BUILD_JOBS=3
+COPY patches/libplacebo/ /tmp/libplacebo-patches/
+RUN case "$DIRECT_NV12_OUTPUT" in 0|1) ;; *) exit 1 ;; esac && \
+    if [ "$DIRECT_NV12_OUTPUT" = 1 ]; then \
+      git clone --branch v7.360.1 --depth 1 --recursive \
+        https://code.videolan.org/videolan/libplacebo /tmp/libplacebo-direct && \
+      cd /tmp/libplacebo-direct && \
+      test "$(git rev-parse HEAD)" = cee9b076f2c63104ccfd497fa79c39a867293ec4 && \
+      git apply /tmp/libplacebo-patches/0001-nv12-direct-output-match.patch && \
+      PYTHONPATH=/tmp/libplacebo-direct/3rdparty/jinja/src:/tmp/libplacebo-direct/3rdparty/markupsafe/src \
+      meson setup build --buildtype=release --prefix=/usr --libdir=/usr/local/lib/x86_64-linux-gnu \
+        -Ddefault_library=shared -Ddemos=false -Dtests=false -Dopengl=disabled \
+        -Dvulkan=enabled -Dshaderc=enabled -Dglslang=disabled && \
+      PYTHONPATH=/tmp/libplacebo-direct/3rdparty/jinja/src:/tmp/libplacebo-direct/3rdparty/markupsafe/src \
+      ninja -C build -j "$BUILD_JOBS" install; \
+    fi
+
 # ffmpeg (version inputs come from release.json via scripts/release-vars.sh)
 ARG FFMPEG_VERSION
 ARG FFMPEG_SHA256
