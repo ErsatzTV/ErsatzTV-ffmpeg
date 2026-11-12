@@ -35,6 +35,10 @@ if ! "$FFMPEG" -version >/dev/null 2>&1; then
     echo "ERROR: cannot run ffmpeg: $FFMPEG" >&2
     exit 2
 fi
+# The renders run from the work folder, so a relative path must be anchored first.
+case "$FFMPEG" in
+    */*) FFMPEG="$(cd "$(dirname "$FFMPEG")" && pwd)/$(basename "$FFMPEG")" ;;
+esac
 if [ ! -f "$font" ]; then
     echo "ERROR: missing $font" >&2
     exit 2

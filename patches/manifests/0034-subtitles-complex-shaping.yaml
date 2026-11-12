@@ -42,14 +42,17 @@ notes:
      it differently, whatever fallback fonts the host has."
 last_verified:
   version: n8.1.2
-  date: null
+  date: 2026-11-12
   builds:
     without_patch: n8.1.2-etv.8
-    with_patch: null
+    with_patch: n8.1.2-etv.dev.d525cca0   # linux64 and win64, patches 0001-0033 (8.1.2-8) + this patch
   how: >-
-    Pending a patched build. Unpatched, the reproducer fails on n8.1.2-etv.8
-    and BtbN n8.1.2 (linux64); stock n9.0.2 (Arch) passes. The reported
-    symptom (box before لا with Arial) reproduces on Windows 11 (win64
-    n8.1.2-etv.5 and BtbN n8.1.2) and not with BtbN master
-    N-128837-g986bab2b47.
+    Reproducer on Linux x86_64: n8.1.2-etv.8 and BtbN n8.1.2 fail (the
+    subtitles render matches shaping=simple); stock n9.0.2 (Arch) and the
+    patched linux64 build pass. Windows 11 x86_64, with the reproducer's three
+    renders run from PowerShell: n8.1.2-etv.5 fails, the patched win64 build
+    passes, and the frame hashes match Linux on both sides. The reported
+    symptom (box before لا in an SRT with the default font and with Arial)
+    shows on win64 n8.1.2-etv.5 and BtbN n8.1.2 and is gone with the patched
+    win64 build and on Linux with the patched linux64 build.
 remove_when: "The build moves to FFmpeg 9.0 or newer"
