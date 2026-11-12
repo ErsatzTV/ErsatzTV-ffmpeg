@@ -1,0 +1,48 @@
+Backport of the upstream FFmpeg subtitles filter shaping fix from master. In
+every release from n9.0; not in release/8.1:
+
+  b08c9c5f53 lavfi/vf_subtitles: expose shaping option
+
+The subtitles filter never set a shaping mode, so its zero-initialized field
+selected ASS_SHAPING_SIMPLE. libass then shaped Arabic with FriBidi
+presentation forms instead of HarfBuzz, and a lam-alef ligature left a U+FEFF
+behind that fonts without that glyph (Arial) draw as a box. The option now
+defaults to auto, like the ass filter.
+
+diff --git a/libavfilter/vf_subtitles.c b/libavfilter/vf_subtitles.c
+index dde45357ce..72c621a807 100644
+--- a/libavfilter/vf_subtitles.c
++++ b/libavfilter/vf_subtitles.c
+@@ -76,6 +76,12 @@ typedef struct AssContext {
+     {"fontsdir",       "set the directory containing the fonts to read",           OFFSET(fontsdir),   AV_OPT_TYPE_STRING,     {.str = NULL},  0, 0, FLAGS }, \
+     {"alpha",          "enable processing of alpha channel",                       OFFSET(alpha),      AV_OPT_TYPE_BOOL,       {.i64 = 0   },         0,        1, FLAGS }, \
+ 
++#define SHAPING_OPTIONS \
++    {"shaping", "set shaping engine", OFFSET(shaping), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 1, FLAGS, .unit = "shaping_mode"}, \
++        {"auto",    NULL,              0, AV_OPT_TYPE_CONST, {.i64 = -1},                  INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"}, \
++        {"simple",  "simple shaping",  0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_SIMPLE},  INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"}, \
++        {"complex", "complex shaping", 0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_COMPLEX}, INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"}, \
++
+ /* libass supports a log level ranging from 0 to 7 */
+ static const int ass_libavfilter_log_level_map[] = {
+     [0] = AV_LOG_FATAL,     /* MSGL_FATAL */
+@@ -262,10 +268,7 @@ static const AVFilterPad ass_inputs[] = {
+ 
+ static const AVOption ass_options[] = {
+     COMMON_OPTIONS
+-    {"shaping", "set shaping engine", OFFSET(shaping), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 1, FLAGS, .unit = "shaping_mode"},
+-        {"auto", NULL,                 0, AV_OPT_TYPE_CONST, {.i64 = -1},                  INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"},
+-        {"simple",  "simple shaping",  0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_SIMPLE},  INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"},
+-        {"complex", "complex shaping", 0, AV_OPT_TYPE_CONST, {.i64 = ASS_SHAPING_COMPLEX}, INT_MIN, INT_MAX, FLAGS, .unit = "shaping_mode"},
++    SHAPING_OPTIONS
+     {NULL},
+ };
+ 
+@@ -316,6 +319,7 @@ static const AVOption subtitles_options[] = {
+ #if FF_ASS_FEATURE_WRAP_UNICODE
+     {"wrap_unicode", "break lines according to the Unicode Line Breaking Algorithm", OFFSET(wrap_unicode), AV_OPT_TYPE_BOOL, { .i64 = -1 }, -1, 1, FLAGS },
+ #endif
++    SHAPING_OPTIONS
+     {NULL},
+ };
+ 

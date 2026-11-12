@@ -145,6 +145,12 @@ jobs:
           docker run --rm --entrypoint bash -v "$PWD/patches:/patches:ro" "$TEST_IMAGE" \
             /patches/tests/sub2video-heartbeat-burst.sh /usr/local/bin/ffmpeg
 
+      - name: Subtitles shaping regression
+        if: matrix.test
+        run: |
+          docker run --rm --entrypoint bash -v "$PWD/patches:/patches:ro" "$TEST_IMAGE" \
+            /patches/tests/subtitles-complex-shaping.sh /usr/local/bin/ffmpeg
+
       - name: Attest
         if: inputs.image != ''
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -341,6 +347,11 @@ jobs:
           /bin/bash patches/tests/sub2video-heartbeat-burst.sh \
             "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
 
+      - name: Subtitles shaping regression
+        run: |
+          /bin/bash patches/tests/subtitles-complex-shaping.sh \
+            "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
+
   native-test:
     name: Native test (${{ matrix.target }})
     needs: native
@@ -391,3 +402,7 @@ jobs:
       - name: Sub2video regression
         if: matrix.readrate
         run: patches/tests/sub2video-heartbeat-burst.sh "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
+
+      - name: Subtitles shaping regression
+        if: matrix.readrate
+        run: patches/tests/subtitles-complex-shaping.sh "pkg/ffmpeg-n$FFMPEG_VERSION-$FFMPEG_EXTRA_VERSION-$TARGET-gpl-8.1/bin/ffmpeg"
