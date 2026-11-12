@@ -1,0 +1,55 @@
+id: subtitles-complex-shaping
+patch: 0034-lavfi-vf_subtitles-expose-shaping-option.patch
+based_on: n8.1.2
+status: carried
+upstream:
+  issue: null
+  commits:
+    # master 2026-06-23; in n9.0, n9.0.1 and n9.0.2, not in release/8.1
+    - b08c9c5f53  # lavfi/vf_subtitles: expose shaping option
+dependencies: []              # only patch to touch vf_subtitles.c; applies cleanly
+platforms:
+  - all                       # libavfilter; every build links libass with HarfBuzz
+reproducer: tests/subtitles-complex-shaping.sh
+samples:
+  - samples/etv-test-arabic.ttf   # samples/make-arabic-lam-alef-font.py
+failure_without_patch:
+  - "burned-in Arabic text subtitles: a box next to every lam-alef ligature
+     (e.g. in بلا) with fonts that have no U+FEFF glyph, such as Arial"
+  - "reproducer: the subtitles render matches the shaping=simple render"
+success_with_patch:
+  - "the subtitles filter defaults to auto shaping, as the ass filter does;
+     libass picks HarfBuzz and draws the ligature"
+  - "reproducer: the subtitles render matches the shaping=complex render"
+notes:
+  - "MECHANISM: the subtitles filter shares AssContext with the ass filter but
+     had no shaping option, so the field stayed 0 = ASS_SHAPING_SIMPLE and was
+     passed to ass_set_shaper(). Simple shaping runs FriBidi, which replaces
+     Arabic letters with presentation forms and a lam-alef pair with one
+     ligature code point plus U+FEFF. Fonts without a U+FEFF glyph draw .notdef
+     there. Noto Sans Arabic, Segoe UI and Tahoma have the glyph and look fine,
+     so the symptom depends on the font libass picks."
+  - "FIX: straight backport. Adds shaping=auto|simple|complex to subtitles with
+     the ass filter's default of auto (-1), which leaves libass's own default,
+     complex when it is built with HarfBuzz."
+  - "Symptom in ErsatzTV: external or embedded SRT/ASS in Arabic, burned in
+     with the subtitles filter, shows a box before لا. Reported on Windows with
+     no Arabic font in the fonts folder, so libass fell back to Arial. Every
+     n8.1.2 build shows it, ETV or BtbN; BtbN master nightlies after
+     2026-06-23 do not."
+  - "The reproducer's font is a 4-glyph subset of Noto Sans Arabic without
+     presentation forms or U+FEFF, so simple and complex shaping always render
+     it differently, whatever fallback fonts the host has."
+last_verified:
+  version: n8.1.2
+  date: null
+  builds:
+    without_patch: n8.1.2-etv.8
+    with_patch: null
+  how: >-
+    Pending a patched build. Unpatched, the reproducer fails on n8.1.2-etv.8
+    and BtbN n8.1.2 (linux64); stock n9.0.2 (Arch) passes. The reported
+    symptom (box before لا with Arial) reproduces on Windows 11 (win64
+    n8.1.2-etv.5 and BtbN n8.1.2) and not with BtbN master
+    N-128837-g986bab2b47.
+remove_when: "The build moves to FFmpeg 9.0 or newer"
