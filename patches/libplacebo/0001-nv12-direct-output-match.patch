@@ -1,0 +1,421 @@
+From: TacoRocket
+Subject: [PATCH] renderer: direct NV12 output matching RGBA + scale_vulkan
+
+Apply on libplacebo v7.360.1 (cee9b076f2c63104ccfd497fa79c39a867293ec4).
+
+Adds pl_renderer_set_nv12_output(). With PL_NV12_OUTPUT_MATCH, the renderer
+writes both planes of an NV12 target in the final color pass, with the same
+result as format=rgba followed by FFmpeg's
+scale_vulkan=format=nv12:out_range=limited, without the RGBA image or the
+second pass. PL_RENDERER_NV12_OUTPUT in <libplacebo/renderer.h> marks the API,
+so callers can compile it in only against a library that implements it. The
+default (PL_NV12_OUTPUT_OFF) leaves the renderer unchanged.
+
+- RGB is left unencoded and dithered to 8 bits exactly as the RGBA output
+  is dithered, so each pixel holds the texel value the RGBA route writes.
+- Those values are read back through a 256-entry UNORM8 ramp texture with a
+  linear sampler, the conversion scale_vulkan's texture() read applies.
+- scale_vulkan's BT.709 matrix (ff_fill_rgb2yuv_table, as a dynamic mat4),
+  limited-range scale and offset and top-left UV store follow, unchanged.
+- Y and UV use imageStore, the store scale_vulkan uses. A fragment producer
+  keeps its stage, stores Y itself and discards into an unwritten scratch
+  attachment; a compute producer's own store is used.
+
+Limited-range BT.709 8-bit targets only. Even-aligned picture rectangles
+inside bars are supported; dithering keeps final-frame coordinates through an
+internal origin-aware helper (the public dithering API is unchanged).
+Unsupported layouts, hooks or capabilities restore the deferred RGB encode
+and keep the normal output path.
+
+On Intel ANV (i3-1220P, Gen12) the NV12 output is byte-identical to the RGBA
+route at 1920x1080, 1440x1080 pillarbox, 1920x800 letterbox and 1280x720,
+and on 2160p HDR10 and Dolby Vision 8.1 sources downscaled with scale_vaapi.
+On nine Intel generations (Skylake through Panther Lake, Mesa 25.2.8) the two
+routes compile to the same arithmetic; chroma on other hardware also depends
+on scale_vulkan's unordered 2x2 chroma writes, which compilation cannot
+settle. Other drivers have not been checked.
+
+LGPL-2.1-or-later.
+---
+--- a/src/renderer.c
++++ b/src/renderer.c
+@@ -24,6 +24,9 @@
+ #include "dispatch.h"
+ 
+ #include <libplacebo/renderer.h>
++#if PL_HAVE_VULKAN
++#include <libplacebo/vulkan.h>
++#endif
+ 
+ struct cached_frame {
+     uint64_t signature;
+@@ -84,8 +87,15 @@
+     PL_ARRAY(struct cached_frame) frames;
+     PL_ARRAY(pl_tex) frame_fbos;
+ 
++    // Direct NV12 output (pl_renderer_set_nv12_output)
++    enum pl_nv12_output nv12_output;
++    // UNORM8 ramp, sampled to reproduce scale_vulkan's input conversion
++    pl_tex inline_nv12_match_lut;
++
+     // For debugging / logging purposes
+     int prev_dither;
++    bool inline_nv12_logged;
++    bool inline_nv12_fallback_logged;
+ 
+     // For backwards compatibility
+     struct icc_state icc_fallback[2];
+@@ -138,6 +148,11 @@
+     pl_shader_obj_destroy(&sampler->downscaler_state);
+ }
+ 
++void pl_renderer_set_nv12_output(pl_renderer rr, enum pl_nv12_output mode)
++{
++    rr->nv12_output = mode;
++}
++
+ void pl_renderer_destroy(pl_renderer *p_rr)
+ {
+     pl_renderer rr = *p_rr;
+@@ -154,6 +169,8 @@
+     for (int i = 0; i < rr->frame_fbos.num; i++)
+         pl_tex_destroy(rr->gpu, &rr->frame_fbos.elem[i]);
+ 
++    pl_tex_destroy(rr->gpu, &rr->inline_nv12_match_lut);
++
+     // Free all shader resource objects
+     pl_shader_obj_destroy(&rr->tone_map_state);
+     pl_shader_obj_destroy(&rr->dither_state);
+@@ -373,6 +390,10 @@
+     bool *fbos_used;
+     bool need_peak_fbo; // need indirection for peak detection
+ 
++    // RGB left unencoded for inline_nv12_output's match mode
++    bool inline_nv12_rgb;
++    struct pl_color_repr inline_nv12_repr;
++
+     // Map of acquired frames
+     struct {
+         bool target, image, prev, next;
+@@ -2640,6 +2661,215 @@
+                                                   PL_INTENT_RELATIVE_COLORIMETRIC);
+     pl_matrix3x3_apply(&tr, out_color);
+     pl_color_delinearize(csp, out_color);
++}
++
++// Writes the NV12 target directly from the final color pass.
++// Match reproduces libplacebo format=rgba followed by FFmpeg
++// scale_vulkan=format=nv12:out_range=limited in one pass.
++// Returns 2 when both planes were written, 0 to keep the original output
++// path, -1 on dispatch failure.
++static int inline_nv12_output(struct pass_state *pass, float scale,
++                              enum pl_nv12_output mode)
++{
++    pl_renderer rr = pass->rr;
++    const struct pl_render_params *params = pass->params;
++    const struct pl_frame *target = &pass->target;
++    struct img *img = &pass->img;
++    const struct pl_plane *y = &target->planes[0];
++    const struct pl_plane *uv = &target->planes[1];
++    const pl_rect2d rect = pass->dst_rect;
++    const bool translated = rect.x0 || rect.y0;
++    bool output_hook = false;
++#if PL_HAVE_VULKAN
++    pl_vulkan vk = pl_vulkan_get(rr->gpu);
++    if (!vk || !vk->features || !vk->features->features.fragmentStoresAndAtomics)
++        goto unsupported;
++#else
++    goto unsupported;
++#endif
++    for (int i = 0; i < params->num_hooks; i++)
++        output_hook |= !!(params->hooks[i]->stages & PL_HOOK_OUTPUT);
++
++    if (target->num_planes != 2 || pass->dst_ref != 0 || pass->rotation ||
++        target->repr.sys != PL_COLOR_SYSTEM_BT_709 ||
++        pl_color_space_is_hdr(&target->color) ||
++        target->repr.bits.color_depth != 8 ||
++        params->blend_params || params->error_diffusion || output_hook ||
++        pass->image.num_overlays || target->num_overlays ||
++        y->flipped || uv->flipped ||
++        y->components != 1 || y->component_mapping[0] != 0 ||
++        uv->components != 2 || uv->component_mapping[0] != 1 ||
++        uv->component_mapping[1] != 2 || y->shift_x || y->shift_y ||
++        !y->texture->params.storable ||
++        y->texture->params.format->type != PL_FMT_UNORM ||
++        y->texture->params.format->component_depth[0] != 8 ||
++        uv->texture->params.format->type != PL_FMT_UNORM ||
++        uv->texture->params.format->component_depth[0] != 8 ||
++        uv->texture->params.format->component_depth[1] != 8 ||
++        ((y->texture->params.w | y->texture->params.h) & 1) ||
++        uv->texture->params.w * 2 != y->texture->params.w ||
++        uv->texture->params.h * 2 != y->texture->params.h ||
++        rect.x0 < 0 || rect.y0 < 0 ||
++        rect.x1 > y->texture->params.w || rect.y1 > y->texture->params.h ||
++        rect.x1 - rect.x0 != img->w || rect.y1 - rect.y0 != img->h ||
++        ((rect.x0 | rect.y0 | img->w | img->h) & 1) ||
++        target->crop.x0 != rect.x0 || target->crop.y0 != rect.y0 ||
++        target->crop.x1 != rect.x1 || target->crop.y1 != rect.y1 ||
++        params->distort_params ||
++        (translated && params->dither_params &&
++         params->dither_params->method == PL_DITHER_WHITE_NOISE))
++    {
++        goto unsupported;
++    }
++
++    // pass_output_target left RGB unencoded for match mode; the conversion
++    // below is scale_vulkan's out_range=limited
++    if (mode != PL_NV12_OUTPUT_MATCH || !pass->inline_nv12_rgb || scale != 1.0f ||
++        pl_color_levels_guess(&target->repr) != PL_COLOR_LEVELS_LIMITED ||
++        !uv->texture->params.storable)
++        goto unsupported;
++
++    pl_shader sh = img_sh(pass, img);
++    const bool comp = pl_shader_is_compute(sh);
++    // Y must use imageStore, the store scale_vulkan uses; attachment writes
++    // may round differently. A compute dispatch already stores. A fragment
++    // producer keeps its stage (forcing compute changed the rounding of the
++    // tone-mapping math before the dither on Intel ANV), stores Y itself and
++    // discards into an unwritten scratch attachment.
++    pl_fmt scratch = pass->fbofmt[1];
++    if (!comp && (!scratch || !(scratch->caps & PL_FMT_CAP_RENDERABLE)))
++        goto unsupported;
++    if (!rr->inline_nv12_match_lut) {
++        pl_fmt fmt = pl_find_fmt(rr->gpu, PL_FMT_UNORM, 4, 8, 8,
++                                 PL_FMT_CAP_SAMPLEABLE | PL_FMT_CAP_LINEAR);
++        uint8_t ramp[256][4];
++        for (int i = 0; i < 256; i++) {
++            ramp[i][0] = ramp[i][1] = ramp[i][2] = i;
++            ramp[i][3] = 255;
++        }
++        if (fmt) {
++            rr->inline_nv12_match_lut = pl_tex_create(rr->gpu, pl_tex_params(
++                .w = 256, .h = 1, .format = fmt, .sampleable = true,
++                .initial_data = ramp, .debug_tag = PL_DEBUG_TAG));
++        }
++        if (!rr->inline_nv12_match_lut)
++            goto unsupported;
++    }
++
++    // Compute producers see rectangle-local coordinates; fragment producers
++    // see final-frame coordinates.
++    const int lx = comp ? 0 : rect.x0, ly = comp ? 0 : rect.y0;
++    ident_t uv_out = sh_desc(sh, (struct pl_shader_desc) {
++        .binding.object = uv->texture,
++        .desc = {
++            .name = "nv12_uv_output",
++            .type = PL_DESC_STORAGE_IMG,
++            .access = PL_DESC_ACCESS_WRITEONLY,
++        },
++    });
++    ident_t y_out = comp ? NULL_IDENT : sh_desc(sh, (struct pl_shader_desc) {
++        .binding.object = y->texture,
++        .desc = {
++            .name = "nv12_y_output",
++            .type = PL_DESC_STORAGE_IMG,
++            .access = PL_DESC_ACCESS_WRITEONLY,
++        },
++    });
++    ident_t lut = sh_desc(sh, (struct pl_shader_desc) {
++        .binding = {
++            .object = rr->inline_nv12_match_lut,
++            .sample_mode = PL_TEX_SAMPLE_LINEAR,
++            .address_mode = PL_TEX_ADDRESS_CLAMP,
++        },
++        .desc = {
++            .name = "nv12_match_lut",
++            .type = PL_DESC_SAMPLED_TEX,
++        },
++    });
++
++    // ff_fill_rgb2yuv_table() for BT.709, column-major as in scale_vulkan's
++    // push constants; dynamic so it is not folded.
++    const double cr = 0.2126, cg = 0.7152, cb = 0.0722;
++    const double bscale = 0.5 / (cb - 1.0), rscale = 0.5 / (cr - 1.0);
++    const double t[3][3] = {
++        {cr, cg, cb},
++        {bscale * cr, bscale * cg, 0.5},
++        {0.5, rscale * cg, rscale * cb},
++    };
++    float m[4][4] = {{0}};
++    for (int i = 0; i < 3; i++) {
++        for (int j = 0; j < 3; j++)
++            m[i][j] = t[i][j];
++    }
++    m[3][3] = 1.0f;
++    ident_t mat = sh_var(sh, (struct pl_shader_var) {
++        .var = pl_var_mat4("nv12_match_matrix"),
++        .data = &m[0][0],
++        .dynamic = true,
++    });
++
++    // The RGBA route dithers RGB to 8 bits at final-frame coordinates.
++    if (params->dither_params) {
++        struct pl_dither_params dparams = *params->dither_params;
++        if (!params->disable_dither_gamma_correction)
++            dparams.transfer = target->color.transfer;
++        sh_dither_at(sh, 8, &rr->dither_state, &dparams,
++                     rect.x0 - lx, rect.y0 - ly);
++    }
++
++    // `color` now holds the RGBA route's texel values on the 8-bit grid. The
++    // rest is scale_vulkan's texture read, rgb2yuv and write_nv12, with UV
++    // from the top-left pixel of each 2x2 block.
++    GLSL("vec3 inline_k = clamp(roundEven(color.rgb * 255.0), 0.0, 255.0);\n"
++         "vec3 inline_t = (inline_k + vec3(0.5)) / 256.0;\n"
++         "vec4 inline_src = vec4(texture("$", vec2(inline_t.r, 0.5)).r,\n"
++         "                       texture("$", vec2(inline_t.g, 0.5)).r,\n"
++         "                       texture("$", vec2(inline_t.b, 0.5)).r, 1.0);\n"
++         "inline_src *= "$";\n"
++         "inline_src *= vec4(219.0 / 255.0, 224.0 / 255.0, 224.0 / 255.0, 1.0);\n"
++         "inline_src += vec4(16.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 0.0);\n"
++         "ivec2 inline_local = ivec2(gl_FragCoord.xy) - ivec2(%d, %d);\n"
++         "bool inline_inside = all(greaterThanEqual(inline_local, ivec2(0))) &&\n"
++         "                     all(lessThan(inline_local, ivec2(%d, %d)));\n"
++         "ivec2 inline_pos = inline_local + ivec2(%d, %d);\n"
++         "if (inline_inside && ((inline_pos.x | inline_pos.y) & 1) == 0)\n"
++         "    imageStore("$", inline_pos >> 1, vec4(inline_src.gb, 0.0, 0.0));\n"
++         "color = vec4(inline_src.r, 0.0, 0.0, 1.0);\n",
++         lut, lut, lut, mat, lx, ly, img->w, img->h, rect.x0, rect.y0, uv_out);
++    if (y_out) {
++        GLSL("if (inline_inside)\n"
++             "    imageStore("$", inline_pos, vec4(color.r, 0.0, 0.0, 0.0));\n"
++             "discard;\n", y_out);
++    }
++    sh_describe(sh, "direct NV12 output matching RGBA + scale_vulkan");
++    if (!rr->inline_nv12_logged) {
++        PL_INFO(rr, "nv12_output: accepted mode=match producer=%s",
++                comp ? "compute" : "fragment");
++        rr->inline_nv12_logged = true;
++    }
++
++    pl_tex dst = y->texture;
++    if (!comp) {
++        dst = get_fbo(pass, y->texture->params.w, y->texture->params.h,
++                      scratch, 1, PL_DEBUG_TAG);
++        if (!dst)
++            return -1;
++    }
++    if (!pl_dispatch_finish(rr->dp, pl_dispatch_params(
++            .shader = &img->sh, .target = dst, .rect = rect)))
++        return -1;
++    return 2;
++
++unsupported:
++    if (pass->inline_nv12_rgb) {
++        pl_shader_encode_color(img_sh(pass, img), &pass->inline_nv12_repr);
++        pass->inline_nv12_rgb = false;
++    }
++    if (!rr->inline_nv12_fallback_logged) {
++        PL_INFO(rr, "nv12_output: unsupported layout or capability; using original output");
++        rr->inline_nv12_fallback_logged = true;
++    }
++    return 0;
+ }
+ 
+ static bool pass_output_target(struct pass_state *pass)
+@@ -2812,7 +3042,19 @@
+     }
+ 
+     enum pl_lut_type lut_type = guess_frame_lut_type(target, true);
+-    if (lut_type != PL_LUT_CONVERSION) {
++    const enum pl_nv12_output inline_mode = rr->nv12_output;
++    bool inline_hook = false;
++    for (int i = 0; i < params->num_hooks; i++)
++        inline_hook |= !!(params->hooks[i]->stages & PL_HOOK_OUTPUT);
++    // Match mode needs the RGB that the RGBA route would have written.
++    // inline_nv12_output converts it, or restores this encode if it declines.
++    pass->inline_nv12_rgb = inline_mode == PL_NV12_OUTPUT_MATCH && !target->lut &&
++                            !inline_hook && target->num_planes == 2 &&
++                            repr.sys == PL_COLOR_SYSTEM_BT_709 &&
++                            pl_color_levels_guess(&target->repr) == PL_COLOR_LEVELS_LIMITED;
++    if (pass->inline_nv12_rgb) {
++        pass->inline_nv12_repr = repr;
++    } else if (lut_type != PL_LUT_CONVERSION) {
+         pl_shader_encode_color(sh, &repr);
+         if (repr.sys == PL_COLOR_SYSTEM_XYZ) {
+             img->color.transfer = PL_COLOR_TRC_ST428;
+@@ -2861,7 +3103,15 @@
+         clear_target(rr, target, border_tex, scale, params);
+     }
+ 
+-    for (int p = 0; p < target->num_planes; p++) {
++    int inline_nv12 = 0;
++    if (inline_mode != PL_NV12_OUTPUT_OFF) {
++        inline_nv12 = inline_nv12_output(pass, scale, inline_mode);
++        if (inline_nv12 < 0)
++            return false;
++    }
++
++    for (int p = inline_nv12 == 2 ? target->num_planes : 0;
++         p < target->num_planes; p++) {
+         const struct pl_plane *plane = &target->planes[p];
+         float rx = (float) plane->texture->params.w / ref->texture->params.w,
+               ry = (float) plane->texture->params.h / ref->texture->params.h;
+--- a/src/shaders/dithering.c
++++ b/src/shaders/dithering.c
+@@ -109,6 +109,12 @@
+                       pl_shader_obj *dither_state,
+                       const struct pl_dither_params *params)
+ {
++    sh_dither_at(sh, new_depth, dither_state, params, 0, 0);
++}
++
++void sh_dither_at(pl_shader sh, int new_depth, pl_shader_obj *dither_state,
++                  const struct pl_dither_params *params, int offset_x, int offset_y)
++{
+     if (!sh_require(sh, PL_SHADER_SIG_COLOR, 0, 0))
+         return;
+ 
+@@ -179,7 +185,12 @@
+ 
+     if (size) {
+         // Transform the screen position to the cyclic range [0,1)
+-        GLSL("vec2 pos = fract(gl_FragCoord.xy * 1.0/"$"); \n", SH_FLOAT(size));
++        if (offset_x || offset_y) {
++            GLSL("vec2 pos = fract((gl_FragCoord.xy + vec2("$", "$")) * 1.0/"$"); \n",
++                 SH_FLOAT(offset_x), SH_FLOAT(offset_y), SH_FLOAT(size));
++        } else {
++            GLSL("vec2 pos = fract(gl_FragCoord.xy * 1.0/"$"); \n", SH_FLOAT(size));
++        }
+ 
+         if (params->temporal) {
+             int phase = SH_PARAMS(sh).index % 8;
+--- a/src/shaders.h
++++ b/src/shaders.h
+@@ -26,6 +26,10 @@
+ #include "gpu.h"
+ 
+ #include <libplacebo/shaders.h>
++
++struct pl_dither_params;
++void sh_dither_at(pl_shader sh, int new_depth, pl_shader_obj *dither_state,
++                  const struct pl_dither_params *params, int offset_x, int offset_y);
+ 
+ // This represents an identifier (e.g. name of function, uniform etc.) for
+ // a shader resource. Not human-readable.
+--- a/src/include/libplacebo/renderer.h
++++ b/src/include/libplacebo/renderer.h
+@@ -69,7 +69,23 @@
+ // the source textures to the finished frame.
+ PL_API pl_renderer pl_renderer_create(pl_log log, pl_gpu gpu);
+ PL_API void pl_renderer_destroy(pl_renderer *rr);
++
++// Direct NV12 output (ErsatzTV patch). Defined when the functions below exist.
++#define PL_RENDERER_NV12_OUTPUT 1
++
++enum pl_nv12_output {
++    PL_NV12_OUTPUT_OFF = 0, // normal output path (default)
++
++    // Write both planes of an 8-bit limited-range BT.709 NV12 target in the
++    // final pass, with the same result as format=rgba followed by FFmpeg's
++    // scale_vulkan=format=nv12:out_range=limited. Targets that do not
++    // qualify keep the normal output path.
++    PL_NV12_OUTPUT_MATCH,
++};
+ 
++// Selects the direct NV12 output mode for this renderer.
++PL_API void pl_renderer_set_nv12_output(pl_renderer rr, enum pl_nv12_output mode);
++
+ // Returns current renderer state, see pl_render_errors.
+ PL_API struct pl_render_errors pl_renderer_get_errors(pl_renderer rr);
+ 
