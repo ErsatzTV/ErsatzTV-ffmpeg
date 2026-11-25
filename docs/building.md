@@ -16,6 +16,8 @@ docker build \
 
 The docker build starts from the dependency image in [`images/linux/deps.lock.json`](../images/linux/deps.lock.json). This image has the libraries from `images/linux/<arch>/deps.Dockerfile`. The docker build compiles only FFmpeg.
 
+The amd64 recipe also supports an optional [single-pass NV12 output](nv12-match.md) rebuild of libplacebo. Add `--build-arg DIRECT_NV12_OUTPUT=1` to build the pinned libplacebo with the Match patch, which also enables FFmpeg's `nv12_output` libplacebo option; ordinary builds and the dependency lock are unchanged.
+
 ### Change a docker library
 
 1. Change `images/linux/<arch>/deps.Dockerfile`.

@@ -1,0 +1,22 @@
+id: vulkan-direct-nv12-opt-in
+patch: 0023-avutil-vulkan-direct-nv12-opt-in.patch
+based_on: n8.1.2
+status: experimental-opt-in
+upstream:
+  commits: []
+dependencies:
+  - 0019-avutil-vulkan-vaapi-reverse-sync.patch
+platforms:
+  - linux-vaapi-vulkan
+failure_without_patch:
+  - Writable imported NV12 lacks color attachment usage required by libplacebo.
+  - Derived context describes combined NV12 while imported images are separate R8/RG8 layers; output was blank green even after adding attachment usage alone.
+notes:
+  - Explicit ETV_VAAPI_DIRECT_NV12=1 opt-in; default behavior is unchanged.
+  - Preserves patch 0019 synchronous completion, command-pool depth and unmodified libplacebo.
+  - Existing image format and DRM modifier capability checks include the added attachment usage.
+  - Assumes VAAPI separate-plane NV12 export; validated only on Intel ANV/iHD with 8-bit SDR output, Y-tiled modifier 0x100000000000002.
+  - AMD, other drivers and modifiers and 10-bit output remain unverified.
+  - Historical isolated probe matched a download/upload reference for 540 frames.
+  - Packaged build with the #80 libplacebo patch (no async handoff patch) matched the RGBA + scale_vulkan route byte for byte on Intel ANV/iHD, 1080p/720p and 2160p HDR10/DV8 sources.
+remove_when: A supported FFmpeg release describes and imports writable VAAPI NV12 surfaces as renderable separate-plane targets without this opt-in.
