@@ -1,0 +1,62 @@
+From: TacoRocket
+Subject: [PATCH] avutil/vulkan: opt in to writable VAAPI NV12 render targets
+
+With ETV_VAAPI_DIRECT_NV12=1, describe writable VAAPI-derived NV12 as
+separate R8/RG8 images and include color attachment usage in imported
+images. Keep the existing format/modifier capability query and synchronous
+reverse-map completion. Default behavior is unchanged.
+
+This experimental path was validated only on Intel ANV/iHD with the
+Y-tiled modifier 0x100000000000002. Other drivers and modifiers are unverified.
+---
+--- a/libavutil/hwcontext_vulkan.c
++++ b/libavutil/hwcontext_vulkan.c
+@@ -2406,6 +2406,12 @@
+     av_freep(&f->internal);
+ }
+ 
++static int direct_nv12_enabled(void)
++{
++    const char *value = getenv("ETV_VAAPI_DIRECT_NV12");
++    return value && !strcmp(value, "1");
++}
++
+ /* Complete Vulkan writes before a reverse mapping returns the VAAPI surface. */
+ int ff_vulkan_wait_frame(const AVFrame *src)
+ {
+@@ -3412,9 +3418,13 @@
+         if (flags & AV_HWFRAME_MAP_READ)
+             create_info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT |
+                                  VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+-        if (flags & AV_HWFRAME_MAP_WRITE)
++        if (flags & AV_HWFRAME_MAP_WRITE) {
+             create_info.usage |= VK_IMAGE_USAGE_STORAGE_BIT |
+                                  VK_IMAGE_USAGE_TRANSFER_DST_BIT;
++            if (direct_nv12_enabled() && hwfc->sw_format == AV_PIX_FMT_NV12)
++                create_info.usage |= ((AVVulkanFramesContext *)hwfc->hwctx)->usage &
++                                     VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
++        }
+ 
+         fmt_props = (VkPhysicalDeviceImageFormatInfo2) {
+             .sType  = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+@@ -4895,7 +4905,19 @@
+ static int vulkan_frames_derive_to(AVHWFramesContext *dst_fc,
+                                    AVHWFramesContext *src_fc, int flags)
+ {
+-    return vulkan_frames_init(dst_fc);
++    AVVulkanFramesContext *derived_vkfc = dst_fc->hwctx;
++    int direct = direct_nv12_enabled() && (flags & AV_HWFRAME_MAP_WRITE) &&
++                 src_fc->format == AV_PIX_FMT_VAAPI &&
++                 dst_fc->sw_format == AV_PIX_FMT_NV12;
++    int err;
++
++    /* VAAPI exports NV12 as separate R8/RG8 DRM layers for this mapping. */
++    if (direct)
++        derived_vkfc->flags |= AV_VK_FRAME_FLAG_DISABLE_MULTIPLANE;
++    err = vulkan_frames_init(dst_fc);
++    if (err >= 0 && direct)
++        derived_vkfc->usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
++    return err;
+ }
+ 
+ AVVkFrame *av_vk_frame_alloc(void)
